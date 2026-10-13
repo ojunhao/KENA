@@ -40,7 +40,7 @@ def test_ses_sdk_contract():
     with Stubber(ses) as stub:
         stub.add_response("send_email", {"MessageId": "ses-1"}, {
             "FromEmailAddress": "bank@example.invalid", "Destination": {"ToAddresses": ["customer@example.invalid"]},
-            "Content": {"Simple": {"Subject": {"Data": "KENA demo: protection confirmation"}, "Body": {"Text": {"Data": "Paused"}}}}})
+            "Content": {"Simple": {"Subject": {"Data": "KENA: protection confirmation"}, "Body": {"Text": {"Data": "Paused"}}}}})
         assert communications(sms, ses, approved=True).send({"channel": "SES", "body": "Paused"})["status"] == "accepted"
         stub.assert_no_pending_responses()
 

@@ -20,7 +20,7 @@ class AwsCommunications:
             result = self.ses.send_email(
                 FromEmailAddress=self.sender,
                 Destination={"ToAddresses": [self.email]},
-                Content={"Simple": {"Subject": {"Data": "KENA demo: protection confirmation"},
+                Content={"Simple": {"Subject": {"Data": "KENA: protection confirmation"},
                                     "Body": {"Text": {"Data": message["body"]}}}},
             )
         else:

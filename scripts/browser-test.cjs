@@ -37,6 +37,8 @@ const base = process.env.KENA_TEST_URL || 'http://127.0.0.1:8000';
     assert.match(await page.locator('.case-card').innerText(), /Transfer paused · case open/);
     assert.match(await page.locator('#outbox').innerText(), /SES/);
     assert.match(await page.locator('#audit').innerText(), /pause_transfer/);
+    assert.doesNotMatch(await page.locator('body').innerText(), /demo|simulat|synthetic|mock|sandbox/i);
+    assert.match(await page.locator('#outbox').innerText(), /prepared/);
 
     await page.locator('#fallback').check();
     await page.getByRole('button',{name:'Create transfer',exact:true}).click();
@@ -55,6 +57,7 @@ const base = process.env.KENA_TEST_URL || 'http://127.0.0.1:8000';
     assert.equal(await page.locator('#error').isVisible(),false);
     const countBefore=await page.locator('.queue-row').count();
     await page.locator('.queue-row.selected [data-delete]').click();
+    assert.doesNotMatch(await page.locator('#delete-dialog').innerText(), /demo|simulat|synthetic|mock|sandbox/i);
     await page.locator('#delete-cancel').click();
     assert.equal(await page.locator('.queue-row').count(),countBefore);
     await page.locator('.queue-row.selected [data-delete]').click();

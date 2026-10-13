@@ -2,10 +2,10 @@
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KENA | Intervention desk</title><link rel="stylesheet" href="/static/style.css"><script defer src="/static/app.js"></script></head>
 <body>
-<aside class="sidebar"><a class="brand" href="/" aria-label="KENA home">KENA<span class="brand-mark" aria-hidden="true"></span></a><nav aria-label="Dashboard sections"><a class="nav active" href="#workspace">Intervention desk</a><a class="nav" href="#outbox-panel">Communication outbox</a></nav><div class="side-bottom"><span class="company">HCLTech</span><span class="sandbox-label">Synthetic sandbox</span></div></aside>
+<aside class="sidebar"><a class="brand" href="/" aria-label="KENA home">KENA<span class="brand-mark" aria-hidden="true"></span></a><nav aria-label="Dashboard sections"><a class="nav active" href="#workspace">Intervention desk</a><a class="nav" href="#outbox-panel">Communication outbox</a></nav><div class="side-bottom"><span class="company">HCLTech</span></div></aside>
 <main>
-<header><div class="breadcrumb">Intervention desk</div><div class="mode"><span>SIMULATED CDS</span><span id="connection">● CONNECTED</span></div></header>
-<section class="transfer-panel panel" aria-label="Create a simulated transfer"><form id="transfer-form">
+<header><div class="breadcrumb">Intervention desk</div><div class="mode"><span>COMMUNICATION SERVICES</span><span id="connection">● CONNECTED</span></div></header>
+<section class="transfer-panel panel" aria-label="Create a transfer"><form id="transfer-form">
 <div class="amount-field"><label for="amount">Transfer amount</label><div class="amount-input"><span>S$</span><input id="amount" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" maxlength="10" placeholder="0.00" value="8000" required aria-label="Transfer amount in SGD"></div></div>
 <fieldset class="signal-controls"><legend>Transaction signals</legend><label><input id="new-payee" type="checkbox" checked> New payee</label><label><input id="unusual-device" type="checkbox"> Unusual device</label><label><input id="repeated-payees" type="checkbox"> Repeated new payees</label><label class="call-option"><input id="active-call" type="checkbox"> Active call</label></fieldset>
 <div class="transfer-actions"><button id="simulate" class="primary" type="submit">Create transfer</button><label class="fallback"><input id="fallback" type="checkbox"> RCS unavailable → SMS</label></div>
@@ -19,5 +19,5 @@
 </section>
 <section id="outbox-panel" class="panel delivery"><div class="panel-heading"><h2>Communication outbox</h2><span class="badge">RCS · SMS · SES</span></div><div class="table-scroll"><table><thead><tr><th>Channel</th><th>Message</th><th>Status</th><th>Time</th></tr></thead><tbody id="outbox"><tr><td colspan="4">No outgoing messages</td></tr></tbody></table></div></section>
 </main>
-<dialog id="delete-dialog" aria-labelledby="delete-dialog-title"><h2 id="delete-dialog-title">Delete transfer?</h2><p id="delete-detail"></p><p>This removes the simulated transfer from the dashboard. Its audit record is retained.</p><div class="dialog-actions"><button id="delete-cancel" class="secondary">Cancel</button><button id="delete-confirm" class="danger">Delete transfer</button></div></dialog>
+<dialog id="delete-dialog" aria-labelledby="delete-dialog-title"><h2 id="delete-dialog-title">Delete transfer?</h2><p id="delete-detail"></p><p>This removes the transfer from the dashboard. Its audit record is retained.</p><div class="dialog-actions"><button id="delete-cancel" class="secondary">Cancel</button><button id="delete-confirm" class="danger">Delete transfer</button></div></dialog>
 </body></html>

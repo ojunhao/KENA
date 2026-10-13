@@ -9,7 +9,7 @@ from .store import Store
 
 
 def create_app(db_path=None, agent=None, transport=None, clock=None):
-    application = FastAPI(title="KENA synthetic demo", version="0.2.0")
+    application = FastAPI(title="KENA intervention platform", version="0.2.1")
     kwargs = {"agent": agent, "transport": transport}
     if clock:
         kwargs["clock"] = clock

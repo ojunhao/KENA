@@ -29,7 +29,7 @@ def assess(event):
         signals.append("Multiple new payees recently")
         score += 5
     if event.get("active_call") is True:
-        signals.append("Active phone call during transfer (simulated)")
+        signals.append("Active phone call during transfer")
         score += 25
     return {"score": min(score, 100), "raw_score": score, "level": "HIGH" if score >= 65 else "LOW", "signals": signals,
             "policy_version": POLICY["version"], "source": "synthetic risk rules"}

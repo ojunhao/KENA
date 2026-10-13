@@ -4,6 +4,25 @@ const money = cents => 'S$' + new Intl.NumberFormat('en-SG', {minimumFractionDig
 const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const timestamp = value => new Date(value).toLocaleTimeString('en-SG', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
 const human = value => value.replaceAll('_',' ');
+const statusLabel = value => value==='simulated'?'prepared':value;
+const policyLabel = value => value.replace(/^KENA-DEMO-(\d+)$/, 'Policy v$1');
+// Present older stored journeys consistently without rewriting their audit records.
+function messageText(value){
+  return String(value).replaceAll('KENA • Demo Bank:', 'KENA:')
+    .replaceAll('A simulated call-state signal', 'Call context')
+    .replaceAll('This is a synthetic demo.', '')
+    .replaceAll("the demo's automatic-protection limit", 'the automatic-protection limit')
+    .replaceAll(' in this demo', '').replaceAll(' (simulated)', '')
+    .replaceAll('Simulated customer RCS unavailable', 'Customer RCS unavailable')
+    .replace(/\s+([.,])/g,'$1').replace(/ {2,}/g,' ').trim();
+}
+function auditText(entry){
+  if(entry.kind==='demo_transfer_deleted')return 'Archived from active views';
+  const keys=['score','signals','call_state','from','to','reason','intent','actions','expires_in_seconds','tool','result','case_id','status','fallback','funds_executed'];
+  const details=Object.fromEntries(Object.entries(entry.detail).filter(([key])=>keys.includes(key)));
+  if(details.status)details.status=statusLabel(details.status);
+  return messageText(JSON.stringify(details));
+}
 function requestId(){ return crypto.randomUUID(); }
 async function api(path, body, asCustomer=false, method=null){
   const headers = {'Content-Type':'application/json'};
@@ -61,19 +80,19 @@ function render(){
     controls();return;
   }
   const j=customer;
-  $('channel').textContent=j.channel+' · SIMULATED';
+  $('channel').textContent=j.channel;
   $('transaction-detail').textContent=`${money(j.event.amount_cents)} → ${j.event.payee} · ${human(j.journey_status)} · ${j.id}`;
   const signature=JSON.stringify(j.messages);
   if(signature!==lastChat){
-    $('chat').innerHTML=j.messages.length?j.messages.map(msg=>`<div class="bubble ${msg.direction==='inbound'?'customer':''} ${msg.channel==='SES'?'email':''}">${escape(msg.body)}<small>${msg.direction==='inbound'?'CUSTOMER':msg.channel==='SES'?'SES FOLLOW-UP':'KENA'} · ${escape(msg.status)} · ${timestamp(msg.at)}</small></div>`).join(''):'<div class="empty">No outreach required</div>';
+    $('chat').innerHTML=j.messages.length?j.messages.map(msg=>`<div class="bubble ${msg.direction==='inbound'?'customer':''} ${msg.channel==='SES'?'email':''}">${escape(msg.direction==='outbound'?messageText(msg.body):msg.body)}<small>${msg.direction==='inbound'?'CUSTOMER':msg.channel==='SES'?'SES FOLLOW-UP':'KENA'} · ${escape(statusLabel(msg.status))} · ${timestamp(msg.at)}</small></div>`).join(''):'<div class="empty">No outreach required</div>';
     $('chat').scrollTop=$('chat').scrollHeight; lastChat=signature;
   }
   $('proposal').hidden=!j.proposal;
   const call=j.call_context?.state || 'unknown';
-  $('risk').innerHTML=`<div class="risk-score">${escape(j.risk.level)} RISK <strong>${j.risk.score}<small>/100</small></strong></div><div class="meter"><div style="width:${j.risk.score}%"></div></div>${j.risk.signals.map(s=>`<div class="signal">${escape(s)}</div>`).join('')}<div class="call-state">Call state: ${escape(call)} · simulated</div>`;
-  $('case').innerHTML=j.case?`<div class="case-card">✓ Transfer paused · case open<br>${escape(j.case.id)}<br>Mock fraud-operations review</div>`:'';
-  $('audit').innerHTML=[...j.audit].reverse().map(a=>`<div class="audit-item"><strong>${escape(human(a.kind))}</strong><p>${escape(JSON.stringify(a.detail))}</p><small>${timestamp(a.at)} · ${escape(a.policy_version)}</small></div>`).join('');
-  $('outbox').innerHTML=j.messages.filter(msg=>msg.direction==='outbound').map(msg=>`<tr><td>${escape(msg.channel)}</td><td>${escape(msg.body)}</td><td><span class="badge">${escape(msg.status)}</span></td><td>${timestamp(msg.at)}</td></tr>`).join('') || '<tr><td colspan="4">No outgoing messages</td></tr>';
+  $('risk').innerHTML=`<div class="risk-score">${escape(j.risk.level)} RISK <strong>${j.risk.score}<small>/100</small></strong></div><div class="meter"><div style="width:${j.risk.score}%"></div></div>${j.risk.signals.map(s=>`<div class="signal">${escape(messageText(s))}</div>`).join('')}<div class="call-state">Call state: ${escape(call)}</div>`;
+  $('case').innerHTML=j.case?`<div class="case-card">✓ Transfer paused · case open<br>${escape(j.case.id)}<br>Fraud-operations review</div>`:'';
+  $('audit').innerHTML=[...j.audit].reverse().map(a=>`<div class="audit-item"><strong>${escape(human(a.kind==='demo_transfer_deleted'?'transfer_archived':a.kind==='message_dispatched'&&a.detail.status==='simulated'?'message_prepared':a.kind))}</strong><p>${escape(auditText(a))}</p><small>${timestamp(a.at)} · ${escape(policyLabel(a.policy_version))}</small></div>`).join('');
+  $('outbox').innerHTML=j.messages.filter(msg=>msg.direction==='outbound').map(msg=>`<tr><td>${escape(msg.channel)}</td><td>${escape(messageText(msg.body))}</td><td><span class="badge">${escape(statusLabel(msg.status))}</span></td><td>${timestamp(msg.at)}</td></tr>`).join('') || '<tr><td colspan="4">No outgoing messages</td></tr>';
   controls();
 }
 $('transfer-form').onsubmit=e=>{

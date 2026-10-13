@@ -1,5 +1,9 @@
 # Development progress — 13 October 2026
 
+## Version 0.2.1 presentation update — 14 October 2026
+
+Removed simulation/demo language from the interface and customer notification templates, including header/sidebar labels, call context, case review, consent, deletion dialog and SES subject. Historical outbound copy and audit entries use a presentation formatter, preserving original stored evidence. Internal simulator statuses display as **prepared**, never as delivered. Tool, transport and device behavior remain unchanged and are still mocked/simulated as documented below. This presentation change does not implement real AWS delivery, native call detection or production banking.
+
 ## Version 0.2 update
 
 Editable SGD amounts with exact-cent handling; a compact HCLTech-inspired blue/purple interface without the marketing hero/subtexts; per-transfer deletion with confirmation, audit retention and replay prevention; simulated active-call context adding 25 risk points and targeted RCS/SMS outreach. Android-state normalization and observation freshness are implemented as isolated future-integration seams; native device access is not implemented.

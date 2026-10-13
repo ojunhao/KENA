@@ -63,7 +63,7 @@ class JourneyService:
             row = db.execute("SELECT id FROM journeys WHERE event_id=?", (event.event_id,)).fetchone()
             if row:
                 if self.store.get(db, row["id"]).get("deleted_at"):
-                    raise HTTPException(409, "This event belongs to a deleted demo transfer")
+                    raise HTTPException(409, "This event belongs to a deleted transfer")
                 j = self.load(db, row["id"])
                 if j["event_fingerprint"] != digest:
                     raise HTTPException(409, "Event ID reused with different payload")
@@ -78,12 +78,12 @@ class JourneyService:
                  "call_context": call_context(event.active_call), "deleted_at": None}
             audit(j, "risk_assessed", {"score": risk["score"], "signals": risk["signals"], "call_state": j["call_context"]["state"], "call_signal_source": "simulator"})
             if event.preferred_channel == "RCS" and channel == "SMS":
-                audit(j, "channel_fallback", {"from": "RCS", "to": "SMS", "reason": "Simulated customer RCS unavailable"})
+                audit(j, "channel_fallback", {"from": "RCS", "to": "SMS", "reason": "Customer RCS unavailable"})
             if risk["level"] == "HIGH":
                 amount = event.amount_cents / 100
-                question = ("A simulated call-state signal indicates you may be on a phone call. Is someone on the call instructing you to transfer this money?"
+                question = ("Call context suggests you may be on a phone call. Is someone on the call instructing you to transfer this money?"
                             if event.active_call is True else "Did you authorise it, or did someone instruct you to send it?")
-                outbound(j, f"KENA • Demo Bank: We noticed a S${amount:,.2f} transfer to {event.payee}. {question} Reply in your own words. We will never ask for passwords or OTPs. This is a synthetic demo.")
+                outbound(j, f"KENA: We noticed a S${amount:,.2f} transfer to {event.payee}. {question} Reply in your own words. We will never ask for passwords or OTPs.")
             self.store.put(db, j)
         self.dispatch(j["id"])
         return self.read(j["id"])
@@ -147,7 +147,7 @@ class JourneyService:
                     j["proposal"] = None
                     j["journey_status"] = "human_review"
                     audit(j, "policy_escalation", {"reason": "Amount exceeds automatic protection cap"})
-                    outbound(j, "This transfer exceeds the demo's automatic-protection limit. No banking action has been taken. Contact the bank through its official app for urgent human review.")
+                    outbound(j, "This transfer exceeds the automatic-protection limit. No banking action has been taken. Contact the bank through its official app for urgent human review.")
                 else:
                     self.propose(j, customer_id, journey_id)
             elif intent == "cancel":
@@ -173,7 +173,7 @@ class JourneyService:
             "expires_at": self.clock() + POLICY["confirmation_ttl_seconds"], "customer_id": customer_id,
             "transaction_id": journey_id, "policy_version": POLICY["version"]}
         audit(j, "protection_proposed", {"actions": POLICY["tools"], "expires_in_seconds": POLICY["confirmation_ttl_seconds"]})
-        outbound(j, "I can pause this pending transfer and open a scam-review case. Nothing has been changed yet. Confirm BOTH actions using the confirmation control in this demo, or reply cancel. If someone claimed to be your bank or the police, stop communicating with them and contact your bank through its official app.")
+        outbound(j, "I can pause this pending transfer and open a scam-review case. Nothing has been changed yet. Confirm both actions using the confirmation control, or reply cancel. If someone claimed to be your bank or the police, stop communicating with them and contact your bank through its official app.")
 
     def recover_queued(self):
         # Only safe for the side-effect-free local simulator. No AWS retry on startup.
@@ -217,7 +217,7 @@ class JourneyService:
             audit(j, "tool_executed", {"tool": "create_scam_case", "case_id": j["case"]["id"], "mock": True})
             j["journey_status"] = "protected"
             j["proposal"] = None
-            body = f"Your S${j['event']['amount_cents']/100:,.2f} transfer is paused in this demo. Scam-review case {j['case']['id']} is open. The fraud team will review it; this does not mean funds have been recovered. No passwords or OTPs are required."
+            body = f"Your S${j['event']['amount_cents']/100:,.2f} transfer is paused. Scam-review case {j['case']['id']} is open. The fraud team will review it; this does not mean funds have been recovered. No passwords or OTPs are required."
             outbound(j, body)
             outbound(j, body, "SES")
             self.store.put(db, j)
