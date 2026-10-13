@@ -20,7 +20,7 @@ def main():
         port = sock.getsockname()[1]
     url = f"http://127.0.0.1:{port}"
     with tempfile.TemporaryDirectory(prefix="kena-smoke-") as temporary:
-        env = {**os.environ, "KENA_DB": str(Path(temporary) / "smoke.db"), "KENA_TEST_URL": url}
+        env = {**os.environ, "KENA_DB": str(Path(temporary) / "smoke.db"), "KENA_TEST_URL": url, "KENA_ISOLATED_VERIFICATION": "true"}
         process = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(port)], cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             with httpx.Client(trust_env=False, timeout=1) as client:

@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from .agent import INTENTS, POLICY, LocalAgent, assess
 from .messaging import Simulator
 from .store import Store
+from .device_signals import call_context
 
 
 def identifier(prefix):
@@ -42,7 +43,7 @@ class JourneyService:
 
     def load(self, db, journey_id):
         j = self.store.get(db, journey_id)
-        if not j:
+        if not j or j.get("deleted_at"):
             raise HTTPException(404, "Journey not found")
         return j
 
@@ -61,6 +62,8 @@ class JourneyService:
         with self.store.write() as db:
             row = db.execute("SELECT id FROM journeys WHERE event_id=?", (event.event_id,)).fetchone()
             if row:
+                if self.store.get(db, row["id"]).get("deleted_at"):
+                    raise HTTPException(409, "This event belongs to a deleted demo transfer")
                 j = self.load(db, row["id"])
                 if j["event_fingerprint"] != digest:
                     raise HTTPException(409, "Event ID reused with different payload")
@@ -71,13 +74,16 @@ class JourneyService:
                  "created_at": now(), "customer_id": event.customer_id, "event": payload,
                  "transaction_status": "pending", "journey_status": "awaiting_customer" if risk["level"] == "HIGH" else "not_flagged",
                  "risk": risk, "channel": channel, "case": None, "proposal": None,
-                 "messages": [], "audit": [], "commands": {}, "agent_mode": self.agent.name}
-            audit(j, "risk_assessed", {"score": risk["score"], "signals": risk["signals"]})
+                 "messages": [], "audit": [], "commands": {}, "agent_mode": self.agent.name,
+                 "call_context": call_context(event.active_call), "deleted_at": None}
+            audit(j, "risk_assessed", {"score": risk["score"], "signals": risk["signals"], "call_state": j["call_context"]["state"], "call_signal_source": "simulator"})
             if event.preferred_channel == "RCS" and channel == "SMS":
                 audit(j, "channel_fallback", {"from": "RCS", "to": "SMS", "reason": "Simulated customer RCS unavailable"})
             if risk["level"] == "HIGH":
                 amount = event.amount_cents / 100
-                outbound(j, f"KENA • Demo Bank: We noticed a S${amount:,.2f} transfer to {event.payee}. Did you authorise it, or did someone instruct you to send it? Reply in your own words. We will never ask for passwords or OTPs. This is a synthetic demo.")
+                question = ("A simulated call-state signal indicates you may be on a phone call. Is someone on the call instructing you to transfer this money?"
+                            if event.active_call is True else "Did you authorise it, or did someone instruct you to send it?")
+                outbound(j, f"KENA • Demo Bank: We noticed a S${amount:,.2f} transfer to {event.payee}. {question} Reply in your own words. We will never ask for passwords or OTPs. This is a synthetic demo.")
             self.store.put(db, j)
         self.dispatch(j["id"])
         return self.read(j["id"])
@@ -85,6 +91,19 @@ class JourneyService:
     def read(self, journey_id, customer=False):
         with self.store.connection() as db:
             return self.public(self.load(db, journey_id), customer)
+
+    def delete(self, journey_id):
+        """Remove a synthetic transfer from active views, retaining the audit and event tombstone."""
+        with self.store.write() as db:
+            j = self.store.get(db, journey_id)
+            if not j:
+                raise HTTPException(404, "Journey not found")
+            if not j.get("deleted_at"):
+                j["deleted_at"] = now()
+                j["proposal"] = None
+                audit(j, "demo_transfer_deleted", {"scope": "Removed from demo views; no bank action or message recall"})
+                self.store.put(db, j)
+        return {"id": journey_id, "deleted": True}
 
     def customer(self, journey_id, customer_id):
         j = self.read(journey_id, True)
@@ -114,7 +133,7 @@ class JourneyService:
             j["messages"].append({"id": reply.message_id, "at": now(), "direction": "inbound",
                 "channel": j["channel"], "body": reply.text, "status": "received", "provider_id": None})
             try:
-                intent = self.agent.classify(reply.text, {"amount_cents": j["event"]["amount_cents"], "risk": j["risk"], "journey_status": j["journey_status"]})
+                intent = self.agent.classify(reply.text, {"amount_cents": j["event"]["amount_cents"], "risk": j["risk"], "journey_status": j["journey_status"], "call_context": j.get("call_context", {"state": "unknown"})})
                 if intent not in INTENTS:
                     intent = "uncertain"
             except Exception:
@@ -162,7 +181,7 @@ class JourneyService:
             return 0
         count = 0
         for j in self.store.all():
-            if any(m["direction"] == "outbound" and m["status"] == "queued" for m in j["messages"]):
+            if not j.get("deleted_at") and any(m["direction"] == "outbound" and m["status"] == "queued" for m in j["messages"]):
                 self.dispatch(j["id"])
                 count += 1
         return count
@@ -222,7 +241,7 @@ class JourneyService:
             self.store.put(db, j)
 
     def snapshot(self):
-        journeys = [self.public(j) for j in self.store.all()]
+        journeys = [self.public(j) for j in self.store.all() if not j.get("deleted_at")]
         return {"mode": "synthetic-local-demo", "agent": self.agent.name, "transport": self.transport.name,
                 "policy": POLICY, "journeys": journeys,
                 "metrics": {"flagged": sum(j["risk"]["level"] == "HIGH" for j in journeys),

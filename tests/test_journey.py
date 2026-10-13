@@ -32,7 +32,7 @@ def confirm(client, j, payload=None, headers=HEADERS):
 
 def test_end_to_end(client):
     j = event(client)
-    assert j["risk"]["score"] == 100
+    assert j["risk"]["score"] == 80
     assert j["transaction_status"] == "pending"
     assert j["messages"][0]["channel"] == "RCS"
     assert j["messages"][0]["status"] == "simulated"
@@ -262,6 +262,7 @@ def test_rejects_real_customer_fields(client):
 
 def test_ui_and_health(client):
     assert client.get("/healthz").json()["status"] == "ok"
-    assert "Catch the scam" in client.get("/").text
+    assert "transfer-form" in client.get("/").text
+    assert "Catch the scam" not in client.get("/").text
     assert client.get("/static/app.js").status_code == 200
     assert client.get("/api/journeys/missing").status_code == 404

@@ -9,7 +9,7 @@ from .store import Store
 
 
 def create_app(db_path=None, agent=None, transport=None, clock=None):
-    application = FastAPI(title="KENA synthetic demo", version="0.1.0")
+    application = FastAPI(title="KENA synthetic demo", version="0.2.0")
     kwargs = {"agent": agent, "transport": transport}
     if clock:
         kwargs["clock"] = clock
@@ -38,6 +38,10 @@ def create_app(db_path=None, agent=None, transport=None, clock=None):
     @application.get("/api/journeys/{journey_id}")
     def journey(journey_id: str):
         return service.read(journey_id)
+
+    @application.delete("/api/journeys/{journey_id}")
+    def delete_journey(journey_id: str):
+        return service.delete(journey_id)
 
     @application.get("/api/customer/{journey_id}")
     def customer(journey_id: str, x_demo_customer: str = Header()):

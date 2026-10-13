@@ -43,6 +43,10 @@ For approved live RCS, start with an appropriately registered agent and test dev
 
 ## Invariants and failure handling
 
+Active-call context now passes through the separate provider/normalization boundary in `app/device_signals.py`. The local form supplies simulation input; missing context is unknown. See [call-state integration](call-state.md) for policy v2 weights, permission-aware Android normalization, timestamp freshness and the future authenticated app path. No real device integration or audio access is implemented.
+
+Transfers can be deleted from active demo views. Deletion clears outstanding consent, retains an internal audit/tombstone and excludes the transfer/case from dashboard metrics. Replay cannot recreate a deleted event. This is demo data management, not a banking cancellation or message recall.
+
 1. A risk event cannot execute banking tools.
 2. An agent suggestion cannot authorize banking tools.
 3. Confirmation must match the latest unexpired proposal for the same transaction/customer and approve both allow-listed actions.

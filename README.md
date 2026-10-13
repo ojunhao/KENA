@@ -7,6 +7,7 @@ A working local scam-intervention MVP for the AWS CDS Hackathon, by team **Scamu
 Python 3.12+ is required. The browser frontend has no build step or Node dependency.
 
 ```bash
+git clone https://github.com/ojunhao/KENA.git kena
 cd kena
 python -m venv .venv
 source .venv/bin/activate
@@ -18,12 +19,16 @@ Windows PowerShell: activate with `.\.venv\Scripts\Activate.ps1` instead of `sou
 
 ## Demonstrate the complete journey
 
-1. Click **Simulate S$8,000 transfer**. The new payee, unusual device and recent-payee signals produce a 100/100 synthetic risk score; KENA queues RCS outreach.
+1. Enter a transfer amount in SGD, choose the transaction signals and click **Create transfer**. The amount supports cents, from S$0.01 to S$1,000,000.00. New payee is selected by default; device, recent-payee and active-call signals are optional.
 2. Click **Why flagged?**, or type that question, to inspect the context-based explanation.
 3. Reply **I did not make this transfer**. KENA proposes a pause and scam-review case; the transfer is still pending.
 4. Click **Confirm pause & open case**. The server validates the current customer, token, expiry, policy, transfer state and both approved actions. Mock `pause_transfer` and `create_scam_case` execute atomically.
 5. Watch the queue, metrics, case card and audit trail update. An RCS confirmation and SES follow-up appear in the communication outbox, clearly marked **simulated**.
-6. Check **Simulate RCS unavailable → SMS** before creating another transfer to demonstrate the SMS route. Try cancellation, verification, an ambiguous reply or repeated confirmation to inspect guardrail behavior.
+6. Check **RCS unavailable → SMS** before creating another transfer to demonstrate the SMS route. Try cancellation, verification, an ambiguous reply or repeated confirmation to inspect guardrail behavior.
+
+Toggle **Active call** to simulate phone-based social-engineering context. An S$8,000 new-payee transfer scores 65 without the call and 90 with it; KENA asks whether someone on the call is instructing the customer to transfer money. This does not authorize tools or prove fraud. Signals remain synthetic; nothing reads the device or records a call.
+
+Use the trash button beside a transfer to delete it from active views. The confirmation dialog removes its journey/case from dashboard counts and retains an audit/tombstone internally. It does not cancel a banking transaction or recall messages. Deleted event IDs cannot recreate the transfer. See [call-state integration](docs/call-state.md) for the future Android boundary.
 
 The local agent supports common explicit replies, not unrestricted language understanding. Ambiguous wording results in clarification, never automatic banking action. Verification leaves funds pending for review; KENA cannot execute or release funds.
 
@@ -50,7 +55,7 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-Set `KENA_TEST_URL` for a non-default local port. Browser checks create synthetic journeys without resetting existing data. AWS contract tests use Botocore stubs and fake test credentials; no network calls, recipients or cloud account are required.
+Set `KENA_TEST_URL` for a non-default local port. Browser checks create and remove their own synthetic journeys; the isolated verification harness uses a temporary database. AWS contract tests use Botocore stubs and fake test credentials; no network calls, recipients or cloud account are required.
 
 `python scripts/verify_local.py --browser` starts an isolated temporary local server, runs the CLI journey and browser checks, then stops its own server. Queued simulated messages are recovered at application startup; failed sends are not retried. `requirements-lock.txt` captures all Python dependency versions used for verification.
 
@@ -70,6 +75,7 @@ Compose binds only localhost and persists SQLite in a named volume. The containe
 | `app/service.py` | Journey state machine, consent policy enforcement, atomic mock actions and outbox |
 | `app/store.py` | SQLite serialized writes and durable journey aggregates |
 | `app/agent.py` | Synthetic risk rules, local reply classifier, optional Bedrock Converse classifier |
+| `app/device_signals.py` | Simulated call-state provider, future-device interface, freshness and Android-state normalization |
 | `app/agentcore.py` | AgentCore client and optional SDK runtime decision entrypoint |
 | `app/messaging.py` | Local simulator plus explicit AWS End User Messaging / SES adapters |
 | `app/static/` | Responsive intervention desk and customer simulator |
@@ -93,7 +99,7 @@ export KENA_AGENTCORE_RUNTIME_ARN='<approved-runtime-arn>'
 python -m app.run --agent agentcore --enable-aws-calls
 ```
 
-No AWS live calls, resource creation, deployment or publication were performed. Real CDS wiring still requires approved test destinations, origination/brand registration, verified SES identities, inbound routing, identity/session binding, delivery receipts and an asynchronous outbox worker. The optional AgentCore entrypoint requires the `bedrock-agentcore` SDK, which is not part of the tested base requirements. See [architecture](docs/architecture.md), [implementation plan](docs/plan.md), [progress](docs/progress.md) and [API examples](docs/api.md).
+No AWS live calls, resource creation or deployment were performed. Real CDS wiring still requires approved test destinations, origination/brand registration, verified SES identities, inbound routing, identity/session binding, delivery receipts and an asynchronous outbox worker. The optional AgentCore entrypoint requires the `bedrock-agentcore` SDK, which is not part of the tested base requirements. See [architecture](docs/architecture.md), [implementation plan](docs/plan.md), [progress](docs/progress.md) and [API examples](docs/api.md).
 
 ## Guardrail boundaries
 

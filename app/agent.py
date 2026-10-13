@@ -5,7 +5,7 @@ from typing import Protocol
 
 INTENTS = {"dispute", "verify", "question", "uncertain", "cancel"}
 POLICY = {
-    "version": "KENA-DEMO-1",
+    "version": "KENA-DEMO-2",
     "tools": ["pause_transfer", "create_scam_case"],
     "max_protection_cents": 10000000,
     "confirmation_ttl_seconds": 300,
@@ -24,11 +24,14 @@ def assess(event):
         score += 30
     if event["unusual_device"]:
         signals.append("Unusual device signal")
-        score += 20
+        score += 10
     if event["recent_payee_count"] >= 3:
         signals.append("Multiple new payees recently")
-        score += 15
-    return {"score": score, "level": "HIGH" if score >= 65 else "LOW", "signals": signals,
+        score += 5
+    if event.get("active_call") is True:
+        signals.append("Active phone call during transfer (simulated)")
+        score += 25
+    return {"score": min(score, 100), "raw_score": score, "level": "HIGH" if score >= 65 else "LOW", "signals": signals,
             "policy_version": POLICY["version"], "source": "synthetic risk rules"}
 
 

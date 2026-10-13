@@ -17,6 +17,8 @@ class TransferEvent(StrictModel):
     recent_payee_count: int = Field(default=3, ge=0, le=20, strict=True)
     preferred_channel: Literal["RCS", "SMS"] = "RCS"
     rcs_available: bool = True
+    # None means unavailable/not observed; it must not be treated as proof of no call.
+    active_call: bool | None = Field(default=None, strict=True)
 
 
 class Reply(StrictModel):

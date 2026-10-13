@@ -1,5 +1,13 @@
 # Development progress — 13 October 2026
 
+## Version 0.2 update
+
+Editable SGD amounts with exact-cent handling; a compact HCLTech-inspired blue/purple interface without the marketing hero/subtexts; per-transfer deletion with confirmation, audit retention and replay prevention; simulated active-call context adding 25 risk points and targeted RCS/SMS outreach. Android-state normalization and observation freshness are implemented as isolated future-integration seams; native device access is not implemented.
+
+**79 tests pass** including the original suite plus call-risk uplift, threshold crossing, no action without consent, unknown/missing/invalid call state, rejected call-content fields, Android normalization, freshness, arbitrary amount cents, deletion, invalidated consent and restart persistence. Updated live CLI and Chromium checks pass for exact-cent form entry, active-call outreach, protection, SMS/SES, delete cancellation, selected/last-transfer deletion, empty-state reset, HTML escaping and mobile layout. Desktop and mobile screenshots were inspected internally. Current source is maintained in the private `ojunhao/KENA` repository.
+
+The following sections describe the original 0.1 delivery; its 50-test count and no-publication statement are historical.
+
 ## Delivered
 
 - Isolated `kena` Git repository on `main`, self-contained Python application and responsive browser UI.
