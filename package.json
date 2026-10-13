@@ -1,0 +1,8 @@
+{
+  "name": "kena-browser-checks",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Optional browser verification; the application frontend has no Node build dependency",
+  "scripts": {"test:browser": "node scripts/browser-test.cjs"},
+  "devDependencies": {"playwright": "1.62.1"}
+}
