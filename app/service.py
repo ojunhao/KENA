@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import secrets
 import statistics
 import time
@@ -26,6 +27,7 @@ BUTTON_TEXT = {"reply:verify": "I made this transfer", "reply:dispute": "I did n
 TITLES = {"yes, i made it": "reply:verify", "yes, it was me": "reply:verify", "no, not me": "reply:dispute",
           "no, it wasn't me": "reply:dispute", "someone told me to": "reply:coached"}
 MAX_FOLLOW_UPS = 2
+log = logging.getLogger("kena")
 
 
 def identifier(prefix):
@@ -260,6 +262,11 @@ class JourneyService:
         audit(j, "agent_decision", {"agent": self.agent.name, "trigger": trigger, "actions": accepted})
         if trigger == "customer_reply" and not answered:
             outbound(j, CLARIFY)
+        # The consent request goes last, so its buttons are on the newest message the customer sees.
+        consent = next((m for m in reversed(j["messages"]) if any(b["id"].startswith("confirm:") for b in m.get("buttons") or [])), None)
+        if consent and consent["status"] == "queued" and j["messages"][-1] is not consent:
+            j["messages"].remove(consent)
+            j["messages"].append(consent)
 
     def propose(self, j, reason=""):
         j["journey_status"] = "awaiting_confirmation"
@@ -354,7 +361,9 @@ class JourneyService:
                     continue
                 try:
                     msg.update(self.transport.send(msg))
-                except Exception:
+                except Exception as error:
+                    # The reason goes to the server log only; provider errors can carry internal details.
+                    log.warning("Send failed on %s for %s: %s: %s", msg["channel"], journey_id, type(error).__name__, error)
                     msg["status"] = "failed"
                     audit(j, "message_failed", {"message_id": msg["id"], "channel": msg["channel"], "reason": "Transport unavailable; no automatic retry"})
                     self.fail_over(j, msg)

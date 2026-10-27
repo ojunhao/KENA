@@ -4,6 +4,7 @@
     python scripts/connect_local.py setup                      # SNS topic + WhatsApp event routing
     python scripts/connect_local.py check                      # Bedrock, SES (and WhatsApp, SNS when live) readiness
     python scripts/connect_local.py test-whatsapp              # send yourself a WhatsApp message
+    python scripts/connect_local.py test-email                 # send yourself a test email through SES
     python scripts/connect_local.py subscribe --url https://<tunnel>.trycloudflare.com
 
 Reads .env (see .env.example) and your standard AWS credentials (aws configure).
@@ -111,6 +112,29 @@ def cmd_test_whatsapp(session, args):
     print("  Nothing on your phone? Send 'Hi' to the business number first (24-hour window) or use an approved template.")
 
 
+def cmd_test_email(session, args):
+    sender, recipient = require("KENA_SES_SENDER"), require("KENA_CUSTOMER_EMAIL")
+    ses = session.client("sesv2")
+    account = ses.get_account()
+    print(f"SES in {session.region_name}: sending {'enabled' if account['SendingEnabled'] else 'DISABLED'}, "
+          f"{'production' if account['ProductionAccessEnabled'] else 'sandbox (sender and recipient must both be verified)'}")
+    for address in {sender, recipient}:
+        try:
+            identity = ses.get_email_identity(EmailIdentity=address)
+            print(f"  {address}: {'verified' if identity['VerifiedForSendingStatus'] else 'NOT verified - click the link SES emailed you'}")
+        except ses.exceptions.NotFoundException:
+            print(f"  {address}: NOT an identity in this account/region - create it in the SES console")
+    try:
+        result = ses.send_email(FromEmailAddress=sender, Destination={"ToAddresses": [recipient]},
+                                Content={"Simple": {"Subject": {"Data": "KENA test email"},
+                                                    "Body": {"Text": {"Data": "If you can read this, KENA can send email through Amazon SES."}}}})
+    except Exception as error:
+        sys.exit(f"✗ SES rejected the email: {error}")
+    print(f"✓ SES accepted the email (MessageId {result['MessageId']}) from {sender} to {recipient}.")
+    print("  Not in the inbox within a minute? Check Junk/Spam. Mail sent through SES 'from' a company or webmail address")
+    print("  can fail that domain's DMARC check and be junked or dropped; try the same address as sender and recipient.")
+
+
 def cmd_check(session, args):
     ok = True
 
@@ -177,7 +201,7 @@ def cmd_check(session, args):
 def main():
     load_env_file(ROOT / ".env")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["list", "setup", "check", "test-whatsapp", "subscribe"])
+    parser.add_argument("command", choices=["list", "setup", "check", "test-whatsapp", "test-email", "subscribe"])
     parser.add_argument("--url", help="Public tunnel URL, for subscribe")
     parser.add_argument("--waba-id", help="Overrides KENA_WABA_ID, for setup")
     parser.add_argument("--region", default=env("AWS_REGION") or "ap-southeast-1")
@@ -185,7 +209,7 @@ def main():
     if args.command == "subscribe" and not args.url:
         parser.error("subscribe needs --url")
     session = boto3.session.Session(region_name=args.region)
-    {"list": cmd_list, "setup": cmd_setup, "check": cmd_check, "test-whatsapp": cmd_test_whatsapp, "subscribe": cmd_subscribe}[args.command](session, args)
+    {"list": cmd_list, "setup": cmd_setup, "check": cmd_check, "test-whatsapp": cmd_test_whatsapp, "test-email": cmd_test_email, "subscribe": cmd_subscribe}[args.command](session, args)
 
 
 if __name__ == "__main__":

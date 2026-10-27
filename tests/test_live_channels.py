@@ -317,3 +317,26 @@ def test_flagged_transfer_also_sends_alert_email(tmp_path):
     assert "WhatsApp" in email["body"] and "still pending" in email["body"]
     low = create(client, event_id="low", amount_cents=1000, new_payee=False, payee="Known payee • 1930", unusual_device=False, recent_payee_count=0)
     assert low["messages"] == [] and len(transport.sent) == 2
+
+
+def test_consent_message_is_last_even_if_agent_talks_after_proposing(tmp_path):
+    class Chatty:
+        name = "chatty"
+        def respond(self, context):
+            return [{"type": "propose_protection", "reason": "police impersonation"},
+                    {"type": "send_message", "text": "This looks like a scam. Real police never ask you to move money."}]
+    client = TestClient(create_app(str(tmp_path / "o.db"), agent=Chatty(), settings=SETTINGS))
+    j = create(client)
+    j = client.post(f"/api/customer/{j['id']}/replies", headers={"X-Demo-Customer": "demo-customer"},
+                    json={"message_id": "r1", "text": "the police told me to move it"}).json()
+    assert j["messages"][-2]["body"].startswith("This looks like a scam")
+    assert j["messages"][-1]["buttons"][0]["id"] == "confirm:" + j["proposal"]["ref"]
+
+
+def test_send_failure_reason_is_logged_not_exposed(tmp_path, caplog):
+    transport = Recorder(failing={"SES"})
+    client = TestClient(create_app(str(tmp_path / "l.db"), transport=transport, settings=Settings(alert_email=True, customer_phone=PHONE)))
+    with caplog.at_level("WARNING", logger="kena"):
+        j = create(client)
+    assert [m["status"] for m in j["messages"]] == ["accepted", "failed"]
+    assert "provider down" in caplog.text and "provider down" not in str(j)

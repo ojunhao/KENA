@@ -4,7 +4,10 @@ const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<'
 const clock = value => new Date(value).toLocaleTimeString('en-SG', {hour:'2-digit', minute:'2-digit'});
 const SUBTITLE = {WHATSAPP:'Official business account', RCS:'Verified business · RCS chat', SMS:'Text message'};
 const pinned = new URLSearchParams(location.search).get('journey');
-let journey = null, busy = false, signature = '', seenEmail = null, notificationTimer = null, pending = null;
+let journey = null, busy = false, signature = '', seen = null, notificationTimer = null, pending = null;
+// Which channels each messaging app shows in its thread (Google Messages shows RCS and SMS together).
+const THREAD = {WHATSAPP:['WHATSAPP'], RCS:['RCS','SMS'], SMS:['SMS','RCS']};
+const APP_NAME = {WHATSAPP:'WhatsApp', RCS:'Messages', SMS:'Messages', SES:'Mail'};
 const TYPING = '<div class="msg theirs"><div class="bubble typing" role="status"><span class="typing-label">KENA Bank is typing</span><i></i><i></i><i></i></div></div>';
 
 async function api(path, body){
@@ -22,8 +25,9 @@ async function refresh(){
   render();
 }
 
-function notify(email){
-  const [subject, body] = [email.subject || 'KENA Bank', email.body.split('\n')[0]];
+function notify(message, app = 'SES'){
+  const [subject, body] = [message.subject || 'KENA Bank', message.body.split('\n')[0]];
+  document.querySelector('.notification-app').innerHTML = `<span class="mail-icon" aria-hidden="true">${app === 'SES' ? '✉' : '💬'}</span> ${APP_NAME[app] || 'Messages'} · now`;
   $('notification-title').textContent = subject;
   $('notification-text').textContent = body;
   $('notification').hidden = false;
@@ -31,12 +35,23 @@ function notify(email){
   notificationTimer = setTimeout(() => { $('notification').hidden = true; }, 7000);
 }
 
-function buttonsFor(msg, active){
+// A consent button works while its proposal is current; reply buttons work on the newest message that has buttons.
+function buttonActive(msg, button, latest){
+  if(button.id.startsWith('confirm:')) return Boolean(journey.proposal) && journey.proposal.ref === button.id.slice(8);
+  if(journey.transaction_status !== 'pending' || msg !== latest) return false;
+  return button.id !== 'reply:cancel' || Boolean(journey.proposal);
+}
+
+function buttonHtml(msg, button, latest){
+  return `<button type="button" data-button="${escape(button.id)}" ${buttonActive(msg, button, latest) ? '' : 'disabled'}>${escape(button.title)}</button>`;
+}
+
+function buttonsFor(msg, latest){
   if(!msg.buttons?.length) return '';
   const app = journey.channel;
   if(app === 'SMS') return '';
-  if(app === 'RCS' && active) return ''; // RCS shows live suggestions as chips under the thread.
-  return `<div class="bubble-buttons">${msg.buttons.map(b => `<button type="button" data-button="${escape(b.id)}" ${active ? '' : 'disabled'}>${escape(b.title)}</button>`).join('')}</div>`;
+  if(app === 'RCS' && msg === latest) return ''; // RCS shows the current suggestions as chips under the thread.
+  return `<div class="bubble-buttons">${msg.buttons.map(b => buttonHtml(msg, b, latest)).join('')}</div>`;
 }
 
 function render(){
@@ -49,18 +64,18 @@ function render(){
   const app = ['WHATSAPP', 'RCS', 'SMS'].includes(journey.channel) ? journey.channel : 'SMS';
   $('phone').dataset.app = app;
   $('caption').textContent = `${app === 'WHATSAPP' ? 'WhatsApp' : app} · ${journey.id}`;
-  const messages = journey.messages.filter(m => m.channel !== 'SES' && m.status !== 'failed');
-  const emails = journey.messages.filter(m => m.channel === 'SES');
-  const lastEmail = emails[emails.length - 1];
-  if(seenEmail === null) seenEmail = lastEmail?.id || '';
-  else if(lastEmail && lastEmail.id !== seenEmail){ seenEmail = lastEmail.id; notify(lastEmail); }
+  const messages = journey.messages.filter(m => THREAD[app].includes(m.channel) && m.status !== 'failed');
+  // Email and messages on other apps arrive as notifications, not in this chat.
+  const elsewhere = journey.messages.filter(m => m.direction === 'outbound' && !THREAD[app].includes(m.channel) && m.status !== 'failed');
+  if(seen === null) seen = new Set(elsewhere.map(m => m.id));
+  for(const m of elsewhere) if(!seen.has(m.id)){ seen.add(m.id); notify(m, m.channel); }
 
-  const lastOutbound = [...messages].reverse().find(m => m.direction === 'outbound');
+  const latest = [...messages].reverse().find(m => m.direction === 'outbound' && m.buttons?.length);
   const waiting = messages.length && messages[messages.length - 1].direction === 'inbound' && journey.journey_status !== 'protected';
   // The agent can take several seconds: show the customer's message at once and a typing indicator until KENA answers.
   const typing = Boolean(pending) || waiting;
   $('subtitle').textContent = typing ? 'typing…' : SUBTITLE[app];
-  const next = JSON.stringify([messages.map(m => [m.id, m.status]), journey.proposal?.ref, typing, pending, app]);
+  const next = JSON.stringify([messages.map(m => [m.id, m.status]), journey.proposal?.ref, journey.transaction_status, typing, pending, app]);
   if(next === signature) return;
   signature = next;
   let day = '';
@@ -70,16 +85,15 @@ function render(){
     day = label;
     const mine = m.direction === 'inbound';
     const ticks = mine ? `<span class="ticks">${app === 'WHATSAPP' ? '✓✓' : 'Delivered'}</span>` : '';
-    const active = m === lastOutbound && !(m.buttons || []).some(b => b.id.startsWith('confirm:') && !journey.proposal);
     // Google Messages shows RCS and SMS in one thread; label anything that came over a different channel.
     const via = m.channel !== app ? `<span class="via">${m.channel === 'WHATSAPP' ? 'WhatsApp' : escape(m.channel)}</span>` : '';
-    return `${divider}<div class="msg ${mine ? 'mine' : 'theirs'}"><div class="bubble">${via}${escape(m.body)}<span class="meta">${clock(m.at)}${ticks}</span></div>${mine ? '' : buttonsFor(m, active)}</div>`;
+    return `${divider}<div class="msg ${mine ? 'mine' : 'theirs'}"><div class="bubble">${via}${escape(m.body)}<span class="meta">${clock(m.at)}${ticks}</span></div>${mine ? '' : buttonsFor(m, latest)}</div>`;
   }).join('')
     + (pending ? `<div class="msg mine"><div class="bubble">${escape(pending)}<span class="meta">${clock(Date.now())}<span class="ticks sending">✓</span></span></div></div>` : '')
     + (typing ? TYPING : '');
   $('thread').scrollTop = $('thread').scrollHeight;
-  const chips = app === 'RCS' && !typing && lastOutbound?.buttons?.length ? lastOutbound.buttons : [];
-  $('chips').innerHTML = chips.map(b => `<button type="button" data-button="${escape(b.id)}">${escape(b.title)}</button>`).join('');
+  const chips = app === 'RCS' && !typing && latest ? latest.buttons.filter(b => buttonActive(latest, b, latest)) : [];
+  $('chips').innerHTML = chips.map(b => buttonHtml(latest, b, latest)).join('');
   document.querySelectorAll('[data-button]').forEach(el => el.onclick = () => tap(el.dataset.button, el.textContent));
 }
 
@@ -89,7 +103,7 @@ async function act(fn, shown){
   pending = shown || null;
   render();
   try { await fn(); pending = null; await refresh(); }
-  catch(error){ notify({subject:'KENA Bank', body:error.message}); }
+  catch(error){ notify({subject:'KENA Bank', body:error.message}, journey?.channel || 'SMS'); }
   finally { busy = false; pending = null; render(); }
 }
 
