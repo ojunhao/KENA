@@ -43,3 +43,18 @@ X-Demo-Customer: demo-customer
 | `POST /api/customer/{id}/confirm` | Validate consent and execute atomic mock actions |
 
 Repeating the same event/command ID and identical payload does not create extra records or tools. Changing a payload under a used key returns 409. Deleted event IDs remain blocked with 409; reads/replies/confirmation on a deleted journey return 404. Confirmation without valid current consent returns 409; wrong owner returns 403; invalid schema/unsupported actions returns 422. `X-Demo-Customer` is not real authentication and must be replaced before any external exposure. Deletion is an operator demo action within the same local trust boundary; production authorization is pending.
+
+## Channel webhook (v0.3)
+
+`preferred_channel` also accepts `"WHATSAPP"`. WhatsApp outreach carries reply buttons (`reply:verify`, `reply:dispute`, `reply:coached`); the consent message carries `confirm:<proposal-hash>` and `reply:cancel`.
+
+```http
+POST /webhooks/sns
+Content-Type: text/plain; charset=UTF-8   (as sent by Amazon SNS)
+
+{"Type":"Notification","TopicArn":"<KENA_SNS_TOPIC_ARN>","Message":"{\"whatsAppWebhookEntry\":\"{...Meta webhook entry...}\"}","Signature":"...","SigningCertURL":"https://sns.<region>.amazonaws.com/....pem",...}
+```
+
+Only messages from `KENA_SNS_TOPIC_ARN` with a valid SNS signature are accepted; `SubscriptionConfirmation` is confirmed automatically. Text replies, button taps and template quick replies from the enrolled `KENA_CUSTOMER_PHONE` are routed to that customer's open journey; `statuses` update message receipts (`sent`, `delivered`, `read`, `failed`). Two-way SMS notifications (`originationNumber`, `messageBody`) are handled the same way. The endpoint returns as soon as the events are queued; processing is idempotent per provider message ID.
+
+`GET /api/dashboard` also returns `channels` (configured channels) and `outcomes` (`response_rate`, `median_first_reply_seconds`, `median_seconds_to_protect`, `escalated_to_human`).

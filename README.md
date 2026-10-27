@@ -1,112 +1,107 @@
 # KENA — Knowledge-Enabled Notification Agent
 
-A working local scam-intervention MVP for the AWS CDS Hackathon, by team **Scamurais**. All customer, payee, risk and banking data is synthetic. Default mode makes **zero AWS calls** and sends no real messages.
+An agentic scam-intervention service for retail banks, built for the AWS CDS Agentic AI Partner Hackathon 2026 by team **Scamurais** (HCLTech).
 
-## Run locally
+When the bank's risk engine flags a pending transfer, KENA reaches the customer on **WhatsApp** (or RCS/SMS), holds a real conversation with them using **Claude on Amazon Bedrock**, recognises the scam pattern from a knowledge playbook, and asks for explicit one-tap consent to **pause the transfer and open a scam case**. It follows up on another channel if the customer goes quiet, escalates to a human when needed, and sends a formal **SES** email that carries the whole cross-channel conversation.
 
-Python 3.12+ is required. The browser frontend has no build step or Node dependency.
+All customer, payee and banking data is synthetic, and banking actions are mocked. With no configuration KENA runs fully locally with simulated channels and a rules-based agent. Set a few environment variables and the same code sends real messages through AWS End User Messaging and SES.
+
+## What the agent decides, and what it can't
+
+| Claude decides (tool use) | The server enforces |
+| --- | --- |
+| What to say, in the customer's language | No links, phone numbers, credential requests or promises of refunds (`app/policy.py`) |
+| Which scam typology fits (`search_scam_playbook`) | Only `pause_transfer` and `create_scam_case` exist, and only after consent |
+| When to ask for protection (`propose_protection`) | Consent wording is fixed server text; only the WhatsApp/app button carries consent, never a typed "yes" |
+| When the customer is genuine (`record_customer_verified`) | Five-minute consent bound to customer, transfer, proposal and policy version |
+| When to escalate (`escalate_to_human`) and which channel to follow up on | Amount cap, transfer state and channel availability re-checked before anything is committed |
+
+Every action is planned against a snapshot, re-validated against the current state, and committed atomically with the audit trail and outbox.
+
+## Architecture
+
+![KENA architecture on AWS](docs/architecture.png)
+
+Deployed with `infra/kena.yaml`: EC2 behind a CloudFront HTTPS URL, an SNS topic for channel events, and IAM limited to WhatsApp, SMS, SES, Bedrock and its own config. See [architecture](docs/architecture.md).
+
+## Run locally (no AWS)
+
+Python 3.12+.
 
 ```bash
-git clone https://github.com/ojunhao/KENA.git kena
-cd kena
-python -m venv .venv
-source .venv/bin/activate
+git clone https://github.com/ojunhao/KENA.git kena && cd kena
+python -m venv .venv && source .venv/bin/activate     # Windows: .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+python -m app.run                                     # http://127.0.0.1:8000
 ```
 
-Windows PowerShell: activate with `.\.venv\Scripts\Activate.ps1` instead of `source`; all remaining Python commands are the same. If activation is blocked, use `.\.venv\Scripts\python.exe` directly. Open **http://127.0.0.1:8000**. Interactive API reference: **http://127.0.0.1:8000/docs**.
+Open the customer phone emulator at http://127.0.0.1:8000/device (or **Customer device ↗** in the sidebar) next to the dashboard. It renders WhatsApp, RCS (Google Messages) or SMS, and its buttons and composer act as the customer.
 
-## Demonstrate the complete journey
+1. Choose **WhatsApp**, keep **New payee**, tick **Active call**, and click **Create transfer** (S$8,000 scores 90).
+2. Click **Not my transfer** or type your own reply. KENA proposes protection; the transfer is still pending.
+3. Click **Confirm pause & open case**. The transfer pauses atomically, a case opens, and WhatsApp and SES confirmations appear in the outbox.
+4. Leave another transfer unanswered: after 90 seconds (`KENA_NO_RESPONSE_SECONDS`) KENA follows up on SMS, then escalates with an email record.
 
-1. Enter a transfer amount in SGD, choose the transaction signals and click **Create transfer**. The amount supports cents, from S$0.01 to S$1,000,000.00. New payee is selected by default; device, recent-payee and active-call signals are optional.
-2. Click **Why flagged?**, or type that question, to inspect the context-based explanation.
-3. Reply **I did not make this transfer**. KENA proposes a pause and scam-review case; the transfer is still pending.
-4. Click **Confirm pause & open case**. The server validates the current customer, token, expiry, policy, transfer state and both approved actions. Mock `pause_transfer` and `create_scam_case` execute atomically.
-5. Watch the queue, metrics, case card and audit trail update. An RCS confirmation and SES follow-up appear in the communication outbox, clearly marked **simulated**.
-6. Check **RCS unavailable → SMS** before creating another transfer to demonstrate the SMS route. Try cancellation, verification, an ambiguous reply or repeated confirmation to inspect guardrail behavior.
+To use Claude while keeping channels simulated: `AWS_REGION=ap-southeast-1 python -m app.run --agent claude` (needs AWS credentials and Bedrock model access).
 
-Toggle **Active call** to simulate phone-based social-engineering context. An S$8,000 new-payee transfer scores 65 without the call and 90 with it; KENA asks whether someone on the call is instructing the customer to transfer money. This does not authorize tools or prove fraud. Signals remain synthetic; nothing reads the device or records a call.
+## Go live
 
-Use the trash button beside a transfer to delete it from active views. The confirmation dialog removes its journey/case from dashboard counts and retains an audit/tombstone internally. It does not cancel a banking transaction or recall messages. Deleted event IDs cannot recreate the transfer. See [call-state integration](docs/call-state.md) for the future Android boundary.
+**From your laptop:** follow **[docs/setup-local-live.md](docs/setup-local-live.md)**. Claude on Bedrock and SES run live from your AWS account; `KENA_LIVE_CHANNELS=SES` sends WhatsApp, RCS and SMS to the device emulator through the same code path. `python scripts/connect_local.py check` verifies the setup. Any channel can be switched to live once its registration is done.
 
-The local agent supports common explicit replies, not unrestricted language understanding. Ambiguous wording results in clarification, never automatic banking action. Verification leaves funds pending for review; KENA cannot execute or release funds.
-
-CLI demo, while the server is running:
+**Hosted on AWS:** follow **[docs/setup-aws.md](docs/setup-aws.md)**, then one command creates an EC2 + CloudFront stack:
 
 ```bash
-python scripts/demo.py
+python scripts/deploy_aws.py --phone +6591234567 --email you@example.com --ses-sender you@example.com \
+  --wa-phone-number-id phone-number-id-... --waba-id waba-... --password '...'
 ```
 
-SQLite is stored in `data/kena.db`; restart preserves journeys. Set `KENA_DB` to an alternate database path for a separate sandbox. Dashboard polling interval is 2.5 seconds. No destructive reset endpoint exists.
+## Configuration
+
+| Variable | Purpose |
+| --- | --- |
+| `KENA_LIVE=1` | Send through AWS. Without it every channel is simulated. |
+| `KENA_LIVE_CHANNELS` | Optional subset sent through AWS, e.g. `SES`; the rest go to the `/device` emulator |
+| `KENA_ALERT_EMAIL` | `1` (default) also emails the customer when a transfer is flagged |
+| `KENA_AGENT` | `local` (default), `claude` (Bedrock), or `agentcore` (with `KENA_AGENTCORE_RUNTIME_ARN`) |
+| `KENA_MODEL`, `KENA_EFFORT` | Bedrock model ID (default `anthropic.claude-opus-5-5`) and optional effort level |
+| `KENA_CUSTOMER_PHONE`, `KENA_CUSTOMER_EMAIL`, `KENA_CUSTOMER_NAME` | The demo customer's real contact details; inbound messages are matched on the phone number |
+| `KENA_WA_PHONE_NUMBER_ID`, `KENA_WA_TEMPLATE` | WhatsApp origination number and optional approved template |
+| `KENA_SMS_IDENTITY`, `KENA_RCS_IDENTITY`, `KENA_SES_SENDER` | Other channels; unset channels are simply unavailable to the agent |
+| `KENA_SNS_TOPIC_ARN` | Only signed SNS messages from this topic are accepted at `/webhooks/sns` |
+| `KENA_BASIC_AUTH` | `user:password` for the dashboard; required on a public interface |
+| `KENA_NO_RESPONSE_SECONDS`, `KENA_DB` | Follow-up delay and SQLite path |
+
+See `.env.example`.
 
 ## Tests
 
 ```bash
-python -m pytest -q
-python scripts/verify_local.py
+python -m pytest -q                        # 109 tests; AWS calls are stubbed, no network
+python scripts/verify_local.py --browser   # isolated server + CLI demo + Chromium checks (Node 22+, npm install)
 ```
 
-Optional real-browser test (Node 22+; server already running):
-
-```bash
-npm install
-npx playwright install chromium
-npm run test:browser
-```
-
-Set `KENA_TEST_URL` for a non-default local port. Browser checks create and remove their own synthetic journeys; the isolated verification harness uses a temporary database. AWS contract tests use Botocore stubs and fake test credentials; no network calls, recipients or cloud account are required.
-
-`python scripts/verify_local.py --browser` starts an isolated temporary local server, runs the CLI journey and browser checks, then stops its own server. Queued simulated messages are recovered at application startup; failed sends are not retried. `requirements-lock.txt` captures all Python dependency versions used for verification.
-
-## Containers
-
-```bash
-docker compose up --build
-```
-
-Compose binds only localhost and persists SQLite in a named volume. The container runs as a non-root user. Docker files are supplied but were not built in the development environment because Docker is unavailable. This local demo has no production authentication and must not be publicly exposed.
+Coverage includes the original journey, consent, concurrency and deletion invariants, plus WhatsApp payload contracts (text, interactive buttons, templates), SNS signature verification and subscription, inbound replies and button taps, stale or replayed consent, delivery receipts, WhatsApp-to-SMS failover, no-response follow-up and escalation, Claude's tool loop with policy feedback and refusal handling, agent text screening and dashboard authentication.
 
 ## Modules
 
 | Component | Responsibility |
 | --- | --- |
-| `app/main.py` | FastAPI event, dashboard and customer routes; static UI |
-| `app/service.py` | Journey state machine, consent policy enforcement, atomic mock actions and outbox |
-| `app/store.py` | SQLite serialized writes and durable journey aggregates |
-| `app/agent.py` | Synthetic risk rules, local reply classifier, optional Bedrock Converse classifier |
-| `app/device_signals.py` | Simulated call-state provider, future-device interface, freshness and Android-state normalization |
-| `app/agentcore.py` | AgentCore client and optional SDK runtime decision entrypoint |
-| `app/messaging.py` | Local simulator plus explicit AWS End User Messaging / SES adapters |
-| `app/static/` | Responsive intervention desk and customer simulator |
-| `tests/` | Journey, concurrency, failure and AWS SDK contract checks |
+| `app/service.py` | Journey state machine, two-phase agent planning, consent, atomic mock actions, outbox, receipts, failover, no-response orchestration |
+| `app/agent.py` | Risk rules, Claude on Bedrock tool loop (`ClaudeAgent`), deterministic `LocalAgent` fallback |
+| `app/policy.py` | Action authorisation and screening of agent-written text |
+| `app/playbook.py` | Scam typology knowledge the agent retrieves |
+| `app/messaging.py` | WhatsApp (End User Messaging Social), SMS/RCS, SES adapters and the simulator |
+| `app/inbound.py` | SNS signature verification; WhatsApp and two-way SMS event parsing |
+| `app/main.py`, `app/run.py`, `app/config.py` | HTTP API, webhook, background worker, dashboard auth, environment settings |
+| `app/agentcore.py` | Optional Bedrock AgentCore Runtime client and entrypoint |
+| `scripts/connect_local.py` | Wires your AWS account to a laptop-hosted KENA (SNS topic, WhatsApp events, tunnel subscription, readiness check) |
+| `infra/kena.yaml`, `scripts/deploy_aws.py` | CloudFormation stack and deploy script |
 
-## AWS integration status
+## Boundaries
 
-AWS communication contracts are central to the journey, but local delivery is simulated. The AWS adapter uses `pinpoint-sms-voice-v2.send_text_message` with either an SMS origination identity or an RCS agent identity, and `sesv2.send_email` for follow-up. Provider **accepted** does not mean **delivered**. Local RCS fallback is a simulated pre-send choice, not a tested AWS carrier fallback.
-
-Bedrock and AgentCore adapters are implemented and stub-tested. The default HTTP app is local rules + simulated communications. The optional launcher can use an approved model backend while keeping messaging simulated:
-
-```bash
-# Only after approval of paid AWS model/runtime calls and account setup.
-# Use the standard AWS credential chain / IAM role; never put credentials in source.
-export AWS_REGION='<approved-region>'
-export KENA_MODEL_ID='<approved-model-or-inference-profile-id>'
-python -m app.run --agent bedrock --enable-aws-calls
-
-# Alternative: a previously approved and deployed AgentCore runtime.
-export KENA_AGENTCORE_RUNTIME_ARN='<approved-runtime-arn>'
-python -m app.run --agent agentcore --enable-aws-calls
-```
-
-No AWS live calls, resource creation or deployment were performed. Real CDS wiring still requires approved test destinations, origination/brand registration, verified SES identities, inbound routing, identity/session binding, delivery receipts and an asynchronous outbox worker. The optional AgentCore entrypoint requires the `bedrock-agentcore` SDK, which is not part of the tested base requirements. See [architecture](docs/architecture.md), [implementation plan](docs/plan.md), [progress](docs/progress.md) and [API examples](docs/api.md).
-
-## Guardrail boundaries
-
-- Only `pause_transfer` and `create_scam_case` are allowed; tool authority stays outside model output.
-- Consent is bound to customer, transaction, current proposal, five-minute expiry, both actions and policy version. A simple "yes" cannot execute tools.
-- Banking state, case, command receipt, audit and outgoing messages commit together. Replayed IDs with changed payloads are rejected.
-- A cancelled or replaced proposal cannot be confirmed. Amounts above the S$100,000 demo policy cap cannot be protected automatically.
-- Event schemas accept only the built-in demo customer/payees, no phone/email/account fields. Conversation text is persisted: do not enter real customer data or secrets. Real PII filtering and retention controls are future work.
-- `X-Demo-Customer` is a synthetic identity assertion, **not authentication**. Dashboard and simulator share a local trust boundary. Production identity, role separation, access control, rate limiting and secure inbound callbacks are not implemented.
-- Failed sends are recorded without rolling back protection or blindly retrying. External bank/API atomicity and exactly-once message delivery are not claimed by this MVP.
+- Banking tools are mocked; KENA never executes, releases, refunds or reverses funds, and verification leaves funds pending for review.
+- Inbound identity is "message came from the enrolled phone number", which is fine for a demo, not for production. Real deployments need authenticated in-app consent.
+- `X-Demo-Customer` on the web simulator is an identity assertion, not authentication. Protect any public deployment with `KENA_BASIC_AUTH`.
+- Conversation text is stored in SQLite. Don't enter real customer data or secrets.
+- A provider's "accepted" isn't "delivered"; KENA shows delivered/read only when WhatsApp reports it. Failed sends are re-routed once to SMS when configured, never blindly retried.
+- Risk scores, the S$100,000 cap and the five-minute consent window are demo choices, not regulatory requirements.

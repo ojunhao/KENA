@@ -1,0 +1,255 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  KENA scam-intervention agent: one Ubuntu instance running the FastAPI app behind a CloudFront HTTPS URL,
+  an SNS topic for WhatsApp/SMS events, and least-privilege access to AWS End User Messaging, SES and Bedrock.
+  Deploy with scripts/deploy_aws.py.
+
+Parameters:
+  ArtifactBucket:
+    Type: String
+    Description: S3 bucket holding the packaged source (created by the deploy script).
+  ArtifactKey:
+    Type: String
+  DashboardUser:
+    Type: String
+    Default: kena
+  DashboardPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: HTTP Basic password protecting the dashboard. The SNS webhook authenticates by signature instead.
+  Live:
+    Type: String
+    Default: "1"
+    AllowedValues: ["0", "1"]
+  Agent:
+    Type: String
+    Default: claude
+    AllowedValues: [claude, local]
+  Model:
+    Type: String
+    Default: anthropic.claude-opus-5-5
+  CustomerName:
+    Type: String
+    Default: Alex
+  CustomerPhone:
+    Type: String
+    Description: E.164 number of the test customer's WhatsApp, e.g. +6591234567.
+  CustomerEmail:
+    Type: String
+    Default: ""
+  SesSender:
+    Type: String
+    Default: ""
+    Description: Verified SES identity used as the From address.
+  WhatsAppPhoneNumberId:
+    Type: String
+    Default: ""
+    Description: AWS End User Messaging Social phone number ID (phone-number-id-...).
+  WhatsAppTemplate:
+    Type: String
+    Default: ""
+    Description: Approved utility template for the first business-initiated message. Leave empty if the customer messages first.
+  SmsIdentity:
+    Type: String
+    Default: ""
+  NoResponseSeconds:
+    Type: Number
+    Default: 90
+  InstanceType:
+    Type: String
+    Default: t3.micro
+  UbuntuAmi:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+
+Resources:
+  EventsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub ${AWS::StackName}-channel-events
+
+  EventsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref EventsTopic]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EndUserMessagingPublish
+            Effect: Allow
+            Principal:
+              Service: [social-messaging.amazonaws.com, sms-voice.amazonaws.com]
+            Action: sns:Publish
+            Resource: !Ref EventsTopic
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+  # Runtime configuration lives here, so config and code updates never replace the instance.
+  RuntimeConfig:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /${AWS::StackName}/env
+      Type: String
+      Value: !Sub |
+        KENA_ARTIFACT=s3://${ArtifactBucket}/${ArtifactKey}
+        KENA_LIVE=${Live}
+        KENA_AGENT=${Agent}
+        KENA_MODEL=${Model}
+        AWS_REGION=${AWS::Region}
+        KENA_CUSTOMER_NAME=${CustomerName}
+        KENA_CUSTOMER_PHONE=${CustomerPhone}
+        KENA_CUSTOMER_EMAIL=${CustomerEmail}
+        KENA_SES_SENDER=${SesSender}
+        KENA_WA_PHONE_NUMBER_ID=${WhatsAppPhoneNumberId}
+        KENA_WA_TEMPLATE=${WhatsAppTemplate}
+        KENA_SMS_IDENTITY=${SmsIdentity}
+        KENA_SNS_TOPIC_ARN=${EventsTopic}
+        KENA_NO_RESPONSE_SECONDS=${NoResponseSeconds}
+        KENA_BASIC_AUTH=${DashboardUser}:${DashboardPassword}
+        KENA_DB=/var/lib/kena/kena.db
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ec2.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: kena-runtime
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Communications
+                Effect: Allow
+                Action:
+                  - social-messaging:SendWhatsAppMessage
+                  - sms-voice:SendTextMessage
+                  - ses:SendEmail
+                Resource: "*"
+              - Sid: ClaudeOnBedrock
+                Effect: Allow
+                Action:
+                  - bedrock-mantle:CreateInference
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: "*"
+              - Sid: Deployment
+                Effect: Allow
+                Action: [s3:GetObject]
+                Resource: !Sub arn:aws:s3:::${ArtifactBucket}/*
+              - Sid: Config
+                Effect: Allow
+                Action: [ssm:GetParameter]
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/env
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: KENA HTTP origin for CloudFront
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: RuntimeConfig
+    Properties:
+      ImageId: !Ref UbuntuAmi
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      SecurityGroupIds: [!GetAtt WebSecurityGroup.GroupId]
+      MetadataOptions: {HttpTokens: required}
+      Tags: [{Key: Name, Value: !Ref AWS::StackName}]
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -y
+          apt-get install -y python3-venv python3-pip curl
+          snap install aws-cli --classic
+          id kena || useradd --system --create-home --home-dir /var/lib/kena kena
+          cat > /usr/local/bin/kena-deploy <<'SCRIPT'
+          #!/bin/bash
+          # Fetch config and source, build a fresh virtualenv, then swap it in and restart.
+          set -euo pipefail
+          export AWS_DEFAULT_REGION=${AWS::Region}
+          /snap/bin/aws ssm get-parameter --name /${AWS::StackName}/env --query Parameter.Value --output text > /etc/kena.env.new
+          artifact=$(grep '^KENA_ARTIFACT=' /etc/kena.env.new | cut -d= -f2-)
+          work=$(mktemp -d)
+          /snap/bin/aws s3 cp "$artifact" "$work/kena.tar.gz"
+          mkdir -p "$work/app"
+          tar -xzf "$work/kena.tar.gz" -C "$work/app"
+          python3 -m venv /opt/kena-venv.new
+          /opt/kena-venv.new/bin/pip install -q -r "$work/app/requirements.txt"
+          systemctl stop kena || true
+          rm -rf /opt/kena /opt/kena-venv
+          mv "$work/app" /opt/kena && mv /opt/kena-venv.new /opt/kena-venv
+          install -m 600 -o kena /etc/kena.env.new /etc/kena.env && rm /etc/kena.env.new
+          systemctl start kena
+          SCRIPT
+          chmod +x /usr/local/bin/kena-deploy
+          cat > /etc/systemd/system/kena.service <<'UNIT'
+          [Unit]
+          Description=KENA intervention agent
+          After=network-online.target
+          [Service]
+          User=kena
+          WorkingDirectory=/opt/kena
+          EnvironmentFile=/etc/kena.env
+          ExecStart=/opt/kena-venv/bin/python -m app.run --host 0.0.0.0 --port 80
+          AmbientCapabilities=CAP_NET_BIND_SERVICE
+          Restart=always
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          systemctl daemon-reload
+          systemctl enable kena
+          /usr/local/bin/kena-deploy
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub ${AWS::StackName} HTTPS endpoint
+        PriceClass: PriceClass_200
+        Origins:
+          - Id: kena-origin
+            DomainName: !GetAtt Instance.PublicDnsName
+            CustomOriginConfig:
+              HTTPPort: 80
+              OriginProtocolPolicy: http-only
+              OriginReadTimeout: 60
+        DefaultCacheBehavior:
+          TargetOriginId: kena-origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+          CachedMethods: [GET, HEAD]
+          # Managed policies: CachingDisabled and AllViewerExceptHostHeader.
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+
+Outputs:
+  Url:
+    Value: !Sub https://${Distribution.DomainName}
+  WebhookUrl:
+    Value: !Sub https://${Distribution.DomainName}/webhooks/sns
+  EventsTopicArn:
+    Value: !Ref EventsTopic
+  InstanceId:
+    Value: !Ref Instance

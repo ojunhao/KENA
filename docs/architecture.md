@@ -1,71 +1,71 @@
 # Technical architecture
 
-## Local implementation
+![KENA architecture on AWS](architecture.png)
 
-One FastAPI process serves the responsive frontend and JSON API. A synthetic transaction event enters a deterministic risk assessment. The journey orchestrator retrieves versioned policy and context, initiates an RCS/SMS outbox message, and interprets customer responses through a replaceable agent interface. Agent output is restricted to intent suggestions. All customer-facing text and banking authorization remain server-controlled.
+A vector version is in [architecture.svg](architecture.svg), and an editable one in [architecture.drawio](architecture.drawio) (open it at app.diagrams.net or in draw.io desktop).
 
-The service retrieves journey context on every reply. A disputed transfer receives a proposed action; confirmation is a separate structured operation, not model-generated authority. The mock banking tools, case record and outbox commit in one SQLite transaction. `BEGIN IMMEDIATE` serializes concurrent changes; unique event IDs and command fingerprints suppress duplicate transitions. Operator views omit consent tokens. Customer views require the matching synthetic customer assertion.
+## Journey
 
 ```mermaid
-flowchart TD
-    E["Synthetic transfer event"] --> J["Journey orchestrator"]
-    P["Versioned policy + risk context"] --> J
-    A["Local or Bedrock / AgentCore intent adapter"] <--> J
-    J --> O["RCS / SMS communication outbox"]
-    O --> C["Customer simulator"]
-    C --> G["Explicit consent + policy gate"]
-    G --> B["Atomic mock pause + scam case"]
-    B --> S["SES follow-up outbox"]
-    B --> D["SQLite state + audit"]
-    J --> D
-    D --> U["Live dashboard"]
+sequenceDiagram
+    participant Risk as Risk engine
+    participant K as KENA service
+    participant C as Claude on Bedrock
+    participant WA as WhatsApp (EUM Social)
+    participant SNS as Amazon SNS
+    participant SES as Amazon SES
+    Risk->>K: transfer event (S$8,000, new payee, active call)
+    K->>WA: alert + reply buttons (or approved template)
+    WA-->>SNS: delivered / read receipts
+    SNS-->>K: signed notification
+    WA-->>SNS: customer reply "police told me to move it"
+    SNS-->>K: signed notification
+    K->>C: journey snapshot + reply (untrusted)
+    C->>K: search_scam_playbook → send_message → propose_protection
+    K->>K: policy re-check, commit atomically
+    K->>WA: answer + fixed consent message [Pause & open case]
+    WA-->>K: button tap (via SNS)
+    K->>K: mock pause_transfer + create_scam_case
+    K->>WA: confirmation
+    K->>SES: formal record with full conversation
 ```
 
-## Planned AWS deployment
+If the customer doesn't answer within `KENA_NO_RESPONSE_SECONDS`, the background worker asks the agent for a decision with trigger `no_response`; it can follow up on another configured channel or escalate to a human with an email record. If a WhatsApp send fails, or WhatsApp later reports it failed (for example outside the 24-hour window), the message is re-sent once by SMS when SMS is configured.
 
-| Local module | AWS transition | Status |
-| --- | --- | --- |
-| Event ingestion | EventBridge → SQS → orchestrator | Not provisioned |
-| FastAPI + frontend | ECS/Fargate or another approved container host behind authenticated HTTPS | Docker scaffold only |
-| Reply intent adapter | Bedrock Converse, optionally hosted on AgentCore Runtime | SDK adapters and runtime entrypoint provided; stub-tested, not deployed |
-| Journey / policy store | DynamoDB conditional writes, versioned policy and TTL | SQLite implemented; cloud store pending |
-| Communications | AWS End User Messaging RCS/SMS + SES | SDK adapters stub-tested; no live wiring |
-| Inbound replies | Supported two-way messaging notifications → SNS/Lambda → trusted customer/session mapping | Pending |
-| Consent | Trusted banking app confirmation or authenticated rich action callback | Demo simulator only |
-| Outbox | Durable SQS worker, bounded retry and receipt reconciliation | In-process simulated dispatch only |
-| Audit | CloudWatch/OpenTelemetry + durable restricted audit records | Local JSON audit only |
+## Components
 
-CDS owns outreach and follow-up, not merely a final notification. In cloud mode, reply events and channel receipts must be correlated with an existing journey. An inbound phone number alone is not a trusted identity; protective tools require a separately authenticated consent flow. No raw public SNS endpoint is provided in this MVP.
+| Concern | Implementation |
+| --- | --- |
+| HTTP, dashboard, webhook | FastAPI (`app/main.py`), static frontend, `/webhooks/sns` |
+| Journey state | SQLite aggregate per transfer, `BEGIN IMMEDIATE` serialised writes (`app/store.py`) |
+| Agent | `ClaudeAgent`: Messages API on Bedrock through `AnthropicBedrockMantle`, bounded tool loop (five turns, three messages); `LocalAgent` rules fallback; optional AgentCore Runtime adapter |
+| Knowledge | `app/playbook.py` scam typologies (government/bank impersonation, investment, job, romance, e-commerce, coached transfer) |
+| Authority | `app/policy.py` evaluates every action against current state and screens agent-written text |
+| Channels | `app/messaging.py`: `socialmessaging.send_whatsapp_message` (text, interactive reply buttons, templates), `pinpoint-sms-voice-v2.send_text_message`, `sesv2.send_email` |
+| Inbound | `app/inbound.py`: SNS signature v1/v2 verification against Amazon's certificate, topic pinning, auto-confirmed subscription, WhatsApp webhook entries and two-way SMS parsing |
+| Hosting | `infra/kena.yaml`: Ubuntu EC2 (SSM-managed, IMDSv2), CloudFront HTTPS, SNS topic with End User Messaging publish policy, SSM Parameter for config, least-privilege role |
 
-AgentCore currently hosts the replaceable decision adapter; the FastAPI service owns the state machine and authorization. Moving broader orchestration into AgentCore is a subsequent integration milestone, not an already completed deployment.
+## Decision flow and invariants
 
-For approved live RCS, start with an appropriately registered agent and test device. This adapter uses direct identity selection. Direct RCS sends have no automatic SMS fallback; pool-based sending can provide fallback when appropriately configured. Add configuration sets/event destinations and correlate receipts before displaying delivered status. Rich RCS cards/actions require a separate richer message contract; the local confirmation button is not a live RCS card.
+Agent calls take seconds, so a reply is handled in three phases:
 
-## Invariants and failure handling
+1. Record the inbound message and take a snapshot, in one transaction.
+2. Let the agent plan against the snapshot, outside the database lock. Its tool results come from the same policy function the server uses, so Claude gets immediate feedback (`credential_request_not_allowed`, `amount_exceeds_protection_cap`, `channel_unavailable`, …) and can adapt.
+3. Re-validate each planned action against the current state and commit actions, audit and outbox atomically. Then dispatch.
 
-Active-call context now passes through the separate provider/normalization boundary in `app/device_signals.py`. The local form supplies simulation input; missing context is unknown. See [call-state integration](call-state.md) for policy v2 weights, permission-aware Android normalization, timestamp freshness and the future authenticated app path. No real device integration or audio access is implemented.
-
-Transfers can be deleted from active demo views. Deletion clears outstanding consent, retains an internal audit/tombstone and excludes the transfer/case from dashboard metrics. Replay cannot recreate a deleted event. This is demo data management, not a banking cancellation or message recall.
+Invariants carried over from the MVP, all covered by tests:
 
 1. A risk event cannot execute banking tools.
-2. An agent suggestion cannot authorize banking tools.
-3. Confirmation must match the latest unexpired proposal for the same transaction/customer and approve both allow-listed actions.
-4. Customer verification never releases funds; risk remains subject to bank review.
-5. Case creation and mock pause are atomic, one case per journey, including concurrent confirmation replays.
+2. Agent output cannot authorise banking tools. Consent is a separate structured operation: the web confirmation or a WhatsApp button whose ID references the current proposal by hash. The token itself never leaves the server.
+3. Confirmation must match the latest unexpired proposal for the same transfer and customer and approve both allow-listed actions.
+4. Verification never releases funds.
+5. Pause and case creation are atomic, one case per journey, also under concurrent or duplicated deliveries (SNS retries are idempotent through message-ID command keys).
 6. Communication failure leaves completed protection intact and auditable.
-7. Default local execution cannot invoke AWS.
+7. Without `KENA_LIVE=1` nothing is sent to AWS.
 
-The SQLite transaction/outbox provides local durability, not a distributed transaction with real banks or delivery providers. A process crash between commit and dispatch can leave queued messages; application startup recovers queued messages only for the side-effect-free simulator. Failed sends are never automatically retried. Real-bank integration needs independently idempotent tools and a resumable workflow with partial-failure reconciliation. Live transport dispatch must be moved outside the database transaction into an asynchronous worker before cloud integration.
+## Known limits
 
-## Assumptions
-
-The mock bank has a pending-transfer state that can still be paused. KENA does not recover an already settled transfer. Risk scores and thresholds are demonstration assumptions, not a trained or calibrated fraud model. The S$100,000 cap and five-minute consent lifetime are demo policy choices, not regulatory requirements. SES closure is simulated and describes protection accurately without promising recovery.
-
-## Official integration references
-
-- [AWS End User Messaging: Sending RCS messages](https://docs.aws.amazon.com/sms-voice/latest/userguide/rcs-send-message.html)
-- [Bedrock Converse inference](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference.html)
-- [AgentCore HTTP protocol contract](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-http-protocol-contract.html)
-- [AgentCore runtime getting started](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-get-started-cli.html)
-
-Checked against official AWS documentation during development on 13 October 2026. Service availability, registration and regional prerequisites must be verified in the approved target account before provisioning.
+- One process and SQLite on one instance. A production design would move state to DynamoDB with conditional writes and dispatch through an SQS outbox worker.
+- Sends happen synchronously after commit; a crash in between leaves queued messages, which are recovered on startup only for the simulator.
+- Inbound identity is the enrolled phone number. Production needs authenticated app consent and per-customer enrolment.
+- WhatsApp receipts are matched on the provider message ID returned by `SendWhatsAppMessage`. Unmatched receipts are ignored.
