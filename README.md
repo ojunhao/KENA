@@ -1,10 +1,26 @@
 # KENA — Knowledge-Enabled Notification Agent
 
-An agentic scam-intervention service for retail banks, built for the AWS CDS Agentic AI Partner Hackathon 2026 by team **Scamurais** (HCLTech).
+**An agentic scam-intervention service for retail banks.** When a customer is about to send money to a scammer, KENA steps in on the customer's own messaging app, finds out what is really happening, and, with the customer's one-tap consent, pauses the transfer before the money leaves.
 
-When the bank's risk engine flags a pending transfer, KENA reaches the customer on **WhatsApp** (or RCS/SMS), holds a real conversation with them using **Claude on Amazon Bedrock**, recognises the scam pattern from a knowledge playbook, and asks for explicit one-tap consent to **pause the transfer and open a scam case**. It follows up on another channel if the customer goes quiet, escalates to a human when needed, and sends a formal **SES** email that carries the whole cross-channel conversation.
+Built for the **AWS CDS Agentic AI Partner Hackathon 2026** by team **Scamurais** (HCLTech).
 
-All customer, payee and banking data is synthetic, and banking actions are mocked. With no configuration KENA runs fully locally with simulated channels and a rules-based agent. Set a few environment variables and the same code sends real messages through AWS End User Messaging and SES.
+▶ **Demo video (3 min):** https://www.youtube.com/watch?v=Y_YrtHfkRxg
+
+## The problem
+
+Most scam losses are authorised push payments: the victim makes the transfer themselves, often while a "police officer" or "bank officer" is still on the phone telling them what to do. Banks can flag these payments, but the intervention is usually a static SMS warning that coached victims ignore, or a call-back that comes too late.
+
+## What KENA does
+
+1. **Detect.** The bank's risk engine sends a flagged transfer (for example S$8,000 to a new payee during an active phone call). KENA scores the signals and opens a journey for it.
+2. **Reach out.** KENA messages the customer at once on **WhatsApp, RCS or SMS**, with one-tap answers, and sends a security-alert **email** through Amazon SES.
+3. **Converse.** The customer answers in their own words. **Claude on Amazon Bedrock** reads the reply with the full context, looks up KENA's scam playbook (government or bank impersonation, investment, job, romance, e-commerce and coached-transfer scams), and decides what to do next.
+4. **Act, with consent.** If the transfer looks like a scam, KENA sends a fixed consent message with a **Pause & open case** button. One tap pauses the transfer and opens a scam-review case, atomically and with a full audit trail. A typed "yes" never authorises anything.
+5. **Follow up and close.** If the customer goes quiet, the agent follows up on another channel and then hands the case to a fraud specialist. Every journey ends with an email that carries the whole cross-channel conversation, and the bank sees response rate and time to protect on a live dashboard.
+
+**Demo scope.** In the recorded demo, Claude on Amazon Bedrock and Amazon SES run live. WhatsApp and RCS messages go through the same journey code but are shown on KENA's customer-device emulator, because WhatsApp Business onboarding and RCS agent registration were not complete in time. The AWS End User Messaging adapters for WhatsApp, RCS and SMS and the SNS inbound webhook are implemented and contract-tested; switching a channel to live is configuration (`KENA_LIVE_CHANNELS`). All customer, payee and banking data is synthetic and banking actions are mocked.
+
+**Built with:** Amazon Bedrock (Claude, tool use) · AWS End User Messaging Social (WhatsApp) · AWS End User Messaging SMS (RCS, SMS) · Amazon SES · Amazon SNS · optional Amazon Bedrock AgentCore Runtime · Amazon EC2 · Amazon CloudFront · AWS CloudFormation · AWS Systems Manager · Amazon S3 · AWS IAM · Python / FastAPI.
 
 ## What the agent decides, and what it can't
 
@@ -40,7 +56,7 @@ Open the customer phone emulator at http://127.0.0.1:8000/device (or **Customer 
 1. Choose **WhatsApp**, keep **New payee**, tick **Active call**, and click **Create transfer** (S$8,000 scores 90).
 2. Click **Not my transfer** or type your own reply. KENA proposes protection; the transfer is still pending.
 3. Click **Confirm pause & open case**. The transfer pauses atomically, a case opens, and WhatsApp and SES confirmations appear in the outbox.
-4. Leave another transfer unanswered: after 90 seconds (`KENA_NO_RESPONSE_SECONDS`) KENA follows up on SMS, then escalates with an email record.
+4. Leave another transfer unanswered: after 90 seconds (`KENA_NO_RESPONSE_SECONDS`) KENA follows up on another channel, then escalates to a human with an email record.
 
 To use Claude while keeping channels simulated: `AWS_REGION=ap-southeast-1 python -m app.run --agent claude` (needs AWS credentials and Bedrock model access).
 
@@ -76,7 +92,7 @@ See `.env.example`.
 ## Tests
 
 ```bash
-python -m pytest -q                        # 109 tests; AWS calls are stubbed, no network
+python -m pytest -q                        # 111 tests; AWS calls are stubbed, no network
 python scripts/verify_local.py --browser   # isolated server + CLI demo + Chromium checks (Node 22+, npm install)
 ```
 
@@ -94,7 +110,8 @@ Coverage includes the original journey, consent, concurrency and deletion invari
 | `app/inbound.py` | SNS signature verification; WhatsApp and two-way SMS event parsing |
 | `app/main.py`, `app/run.py`, `app/config.py` | HTTP API, webhook, background worker, dashboard auth, environment settings |
 | `app/agentcore.py` | Optional Bedrock AgentCore Runtime client and entrypoint |
-| `scripts/connect_local.py` | Wires your AWS account to a laptop-hosted KENA (SNS topic, WhatsApp events, tunnel subscription, readiness check) |
+| `app/static/` | Intervention desk (dashboard) and the customer-device emulator (`/device`) |
+| `scripts/connect_local.py` | Wires your AWS account to a laptop-hosted KENA: readiness check, test email, SNS topic, WhatsApp events, tunnel subscription |
 | `infra/kena.yaml`, `scripts/deploy_aws.py` | CloudFormation stack and deploy script |
 
 ## Boundaries
@@ -105,3 +122,7 @@ Coverage includes the original journey, consent, concurrency and deletion invari
 - Conversation text is stored in SQLite. Don't enter real customer data or secrets.
 - A provider's "accepted" isn't "delivered"; KENA shows delivered/read only when WhatsApp reports it. Failed sends are re-routed once to SMS when configured, never blindly retried.
 - Risk scores, the S$100,000 cap and the five-minute consent window are demo choices, not regulatory requirements.
+
+## Team
+
+Scamurais, HCLTech, for the AWS CDS Agentic AI Partner Hackathon 2026.
