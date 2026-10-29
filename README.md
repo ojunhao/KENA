@@ -6,6 +6,23 @@ Built for the **AWS CDS Agentic AI Partner Hackathon 2026** by team **Scamurais*
 
 ▶ **Demo video (3 min):** https://www.youtube.com/watch?v=Y_YrtHfkRxg
 
+## Try KENA
+
+KENA has a web front end with two views: the bank's **intervention desk** at `/`, and a **customer phone** at `/device` that plays the customer's WhatsApp, RCS or SMS app. You don't need a phone number or email address to try it; the customer phone is where you act as the customer.
+
+- **Hosted demo:** use the deployed URL in the submission's "Try it out" links. Sign in as user `kena` with the password given in the submission.
+- **Run it yourself:** about five minutes with Python 3.12+ and no AWS account; see [Run locally](#run-locally-no-aws) below.
+
+Then:
+
+1. Open the intervention desk, and the customer phone in a second window (**Customer device ↗** in the sidebar).
+2. On the desk choose **WhatsApp**, tick **Active call**, enter `8000` and click **Create transfer**. The alert appears on the phone.
+3. On the phone, tap **No, not me**, or type a reply such as "a police officer told me to move my savings to a safe account".
+4. Tap **Pause & open case**. The desk shows the transfer paused, the scam case, the email record and the audit trail.
+5. Try another transfer and tap **Yes, I made it**, or create an **RCS** transfer and leave it unanswered: after the follow-up delay (90 seconds by default) KENA follows up on another channel and escalates to a human.
+
+Free-text replies are understood by Claude on Amazon Bedrock when `KENA_AGENT=claude` is set with AWS credentials. Without AWS, KENA uses its built-in rules agent, which understands the reply buttons and explicit phrases such as "I did not make this transfer".
+
 ## The problem
 
 Most scam losses are authorised push payments: the victim makes the transfer themselves, often while a "police officer" or "bank officer" is still on the phone telling them what to do. Banks can flag these payments, but the intervention is usually a static SMS warning that coached victims ignore, or a call-back that comes too late.
@@ -126,3 +143,7 @@ Coverage includes the original journey, consent, concurrency and deletion invari
 ## Team
 
 Scamurais, HCLTech, for the AWS CDS Agentic AI Partner Hackathon 2026.
+
+## License
+
+[MIT](LICENSE)
