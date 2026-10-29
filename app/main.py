@@ -4,6 +4,7 @@ import logging
 import os
 import secrets
 import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
@@ -36,7 +37,12 @@ def create_app(db_path=None, agent=None, transport=None, clock=None, settings=No
     kwargs = {"agent": agent or build_agent(settings), "transport": transport or build_transport(settings), "settings": settings}
     if clock:
         kwargs["clock"] = clock
-    service = JourneyService(Store(db_path or os.getenv("KENA_DB", "data/kena.db")), **kwargs)
+    if settings.dynamo_table and not db_path:
+        from .dynamo_store import DynamoStore
+        store = DynamoStore(settings.dynamo_table)
+    else:
+        store = Store(db_path or os.getenv("KENA_DB", "data/kena.db"))
+    service = JourneyService(store, **kwargs)
     service.recover_queued()
     application.state.service = service
     static = Path(__file__).parent / "static"
@@ -57,6 +63,9 @@ def create_app(db_path=None, agent=None, transport=None, clock=None, settings=No
             except Exception:
                 log.exception("No-response worker tick failed")
 
+    last_tick = [0.0]
+    tick_lock = threading.Lock()
+
     if settings.basic_auth:
         @application.middleware("http")
         async def basic_auth(request: Request, call_next):
@@ -66,6 +75,14 @@ def create_app(db_path=None, agent=None, transport=None, clock=None, settings=No
             expected = "Basic " + base64.b64encode(settings.basic_auth.encode()).decode()
             if not secrets.compare_digest(request.headers.get("authorization", ""), expected):
                 return JSONResponse({"detail": "Authentication required"}, 401, {"WWW-Authenticate": 'Basic realm="KENA"'})
+            return await call_next(request)
+
+    if settings.origin_secret:
+        @application.middleware("http")
+        async def origin_only(request: Request, call_next):
+            # Behind CloudFront: requests that bypass it (and its WAF) lack the secret origin header.
+            if not secrets.compare_digest(request.headers.get("x-kena-origin", ""), settings.origin_secret):
+                return JSONResponse({"detail": "Forbidden"}, 403)
             return await call_next(request)
 
     application.mount("/static", StaticFiles(directory=static), name="static")
@@ -85,6 +102,15 @@ def create_app(db_path=None, agent=None, transport=None, clock=None, settings=No
 
     @application.get("/api/dashboard")
     def dashboard():
+        # Without a long-running worker (e.g. on Lambda), dashboard polling drives the no-response follow-ups.
+        if settings.tick_on_request and time.time() - last_tick[0] >= settings.worker_interval_seconds and tick_lock.acquire(blocking=False):
+            try:
+                last_tick[0] = time.time()
+                service.tick()
+            except Exception:
+                log.exception("No-response check failed")
+            finally:
+                tick_lock.release()
         return service.snapshot()
 
     @application.post("/api/events", status_code=201)

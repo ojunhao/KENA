@@ -39,6 +39,11 @@ class Store:
                    (journey["id"], journey["event_id"], json.dumps(journey)))
 
     @staticmethod
+    def find_event(db, event_id):
+        row = db.execute("SELECT id FROM journeys WHERE event_id=?", (event_id,)).fetchone()
+        return row["id"] if row else None
+
+    @staticmethod
     def get(db, journey_id):
         row = db.execute("SELECT payload FROM journeys WHERE id=?", (journey_id,)).fetchone()
         return json.loads(row["payload"]) if row else None

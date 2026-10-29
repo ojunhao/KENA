@@ -94,11 +94,11 @@ class JourneyService:
         payload = event.model_dump()
         digest = fingerprint(payload)
         with self.store.write() as db:
-            row = db.execute("SELECT id FROM journeys WHERE event_id=?", (event.event_id,)).fetchone()
-            if row:
-                if self.store.get(db, row["id"]).get("deleted_at"):
+            existing = self.store.find_event(db, event.event_id)
+            if existing:
+                if self.store.get(db, existing).get("deleted_at"):
                     raise HTTPException(409, "This event belongs to a deleted transfer")
-                j = self.load(db, row["id"])
+                j = self.load(db, existing)
                 if j["event_fingerprint"] != digest:
                     raise HTTPException(409, "Event ID reused with different payload")
                 return self.public(j)

@@ -33,6 +33,9 @@ class Settings:
     no_response_seconds: int = 90
     worker_interval_seconds: float = 5.0
     basic_auth: str | None = None
+    origin_secret: str | None = None
+    tick_on_request: bool = False
+    dynamo_table: str | None = None
 
     @classmethod
     def from_env(cls):
@@ -59,6 +62,10 @@ class Settings:
             no_response_seconds=int(_env("KENA_NO_RESPONSE_SECONDS", cls.no_response_seconds)),
             worker_interval_seconds=float(_env("KENA_WORKER_INTERVAL_SECONDS", cls.worker_interval_seconds)),
             basic_auth=_env("KENA_BASIC_AUTH"),
+            # Serverless hosting: only CloudFront knows the origin secret; follow-ups run on requests, state lives in DynamoDB.
+            origin_secret=_env("KENA_ORIGIN_SECRET"),
+            tick_on_request=_env("KENA_TICK_ON_REQUEST") == "1",
+            dynamo_table=_env("KENA_DYNAMO_TABLE"),
         )
 
     def channel_modes(self, channels):

@@ -123,3 +123,26 @@ For this you need an SNS topic, which the stack creates; or create one yourself 
 4. To show orchestration, create another transfer and don't reply. After `--no-response-seconds` (90 by default) KENA follows up on another channel, then escalates to a human with an email record.
 
 Troubleshooting: on the instance, use **SSM Session Manager** and run `journalctl -u kena -f`. Most issues are a WABA phone-number ID typo, the 24-hour window, an unverified SES address, or Bedrock model access.
+
+## Serverless deployment (Lambda + CloudFront + WAF)
+
+For accounts that block public IPs, default VPCs or open security groups, deploy KENA without any servers:
+
+```bash
+python -m pip install -r requirements.txt
+python scripts/deploy_lambda.py --password 'choose-a-password'
+```
+
+The script builds a Linux package for Python 3.12 and creates, in us-east-1:
+
+| Resource | Purpose |
+| --- | --- |
+| DynamoDB table `kena-journeys` | Journey state, on-demand billing |
+| IAM role `kena-lambda` | DynamoDB on that table, Bedrock inference, CloudWatch Logs |
+| Lambda function `kena` with a Function URL | The FastAPI app via Mangum; it rejects any request without CloudFront's secret origin header |
+| AWS WAF web ACL `kena-waf` | Per-IP rate limit, Amazon IP reputation list, known bad inputs, common rule set |
+| CloudFront distribution | HTTPS URL, no caching, WAF attached, forwards the dashboard's basic-auth header |
+
+Channels are emulated and Claude on Bedrock is live (enable model access first). Dashboard polling drives the no-response follow-ups, since Lambda has no background worker. Run the script again to deploy new code; settings and the password are kept. `python scripts/deploy_lambda.py --delete` removes the distribution, function and table.
+
+Costs are small: Lambda, DynamoDB and CloudFront are per request, and AWS WAF is about US$5 a month for the web ACL plus US$1 per rule, prorated.

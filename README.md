@@ -81,7 +81,9 @@ To use Claude while keeping channels simulated: `AWS_REGION=ap-southeast-1 pytho
 
 **From your laptop:** follow **[docs/setup-local-live.md](docs/setup-local-live.md)**. Claude on Bedrock and SES run live from your AWS account; `KENA_LIVE_CHANNELS=SES` sends WhatsApp, RCS and SMS to the device emulator through the same code path. `python scripts/connect_local.py check` verifies the setup. Any channel can be switched to live once its registration is done.
 
-**Hosted on AWS:** follow **[docs/setup-aws.md](docs/setup-aws.md)**, then one command creates an EC2 + CloudFront stack:
+**Hosted on AWS, serverless:** `python scripts/deploy_lambda.py --password '...'` deploys KENA as an AWS Lambda function behind Amazon CloudFront with AWS WAF (rate limiting and AWS managed rule sets), with journey state in Amazon DynamoDB. It uses no EC2, VPC, public IP or security group, so it suits locked-down landing-zone accounts. Channels are emulated (the `/device` page plays the customer) and Claude on Bedrock is live. See [docs/setup-aws.md](docs/setup-aws.md#serverless-deployment-lambda--cloudfront--waf).
+
+**Hosted on AWS, EC2:** follow **[docs/setup-aws.md](docs/setup-aws.md)**, then one command creates an EC2 + CloudFront stack with live WhatsApp:
 
 ```bash
 python scripts/deploy_aws.py --phone +6591234567 --email you@example.com --ses-sender you@example.com \
@@ -109,7 +111,7 @@ See `.env.example`.
 ## Tests
 
 ```bash
-python -m pytest -q                        # 111 tests; AWS calls are stubbed, no network
+python -m pytest -q                        # 114 tests; AWS calls are stubbed, no network
 python scripts/verify_local.py --browser   # isolated server + CLI demo + Chromium checks (Node 22+, npm install)
 ```
 
@@ -129,7 +131,8 @@ Coverage includes the original journey, consent, concurrency and deletion invari
 | `app/agentcore.py` | Optional Bedrock AgentCore Runtime client and entrypoint |
 | `app/static/` | Intervention desk (dashboard) and the customer-device emulator (`/device`) |
 | `scripts/connect_local.py` | Wires your AWS account to a laptop-hosted KENA: readiness check, test email, SNS topic, WhatsApp events, tunnel subscription |
-| `infra/kena.yaml`, `scripts/deploy_aws.py` | CloudFormation stack and deploy script |
+| `infra/kena.yaml`, `scripts/deploy_aws.py` | EC2 + CloudFront CloudFormation stack and deploy script |
+| `app/lambda_handler.py`, `app/dynamo_store.py`, `scripts/deploy_lambda.py` | Serverless hosting: Lambda entry point, DynamoDB journey store, Lambda + CloudFront + WAF deploy script |
 
 ## Boundaries
 
