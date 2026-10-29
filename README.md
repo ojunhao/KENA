@@ -10,7 +10,7 @@ Built for the **AWS CDS Agentic AI Partner Hackathon 2026** by team **Scamurais*
 
 KENA has a web front end with two views: the bank's **intervention desk** at `/`, and a **customer phone** at `/device` that plays the customer's WhatsApp, RCS or SMS app. You don't need a phone number or email address to try it; the customer phone is where you act as the customer.
 
-- **Hosted demo:** use the deployed URL in the submission's "Try it out" links. Sign in as user `kena` with the password given in the submission.
+- **Hosted demo:** use the deployed URL in the submission's "Try it out" links. No sign-in is needed; it runs on AWS Lambda behind Amazon CloudFront with AWS WAF.
 - **Run it yourself:** about five minutes with Python 3.12+ and no AWS account; see [Run locally](#run-locally-no-aws) below.
 
 Then:

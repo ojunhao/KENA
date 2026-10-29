@@ -2,7 +2,8 @@
 
 No EC2, VPC, public IP or security group is used, so it fits locked-down landing-zone accounts.
 
-    python scripts/deploy_lambda.py --password 'choose-a-password'            # first deploy
+    python scripts/deploy_lambda.py --password 'choose-a-password'            # deploy with a sign-in page
+    python scripts/deploy_lambda.py --no-login                                 # open demo, protected by AWS WAF only
     python scripts/deploy_lambda.py                                            # redeploy code, keep settings
 
 Channels are emulated by default (the /device page plays the customer); Claude on Amazon Bedrock is live.
@@ -80,14 +81,15 @@ def ensure_function(lam, role_arn, code, env):
     try:
         current = lam.get_function_configuration(FunctionName=NAME)
         env = {**current.get("Environment", {}).get("Variables", {}), **{k: v for k, v in env.items() if v is not None}}
+        env = {k: v for k, v in env.items() if v != ""}  # an empty value removes the setting
         lam.update_function_code(FunctionName=NAME, ZipFile=code)
         lam.get_waiter("function_updated_v2").wait(FunctionName=NAME)
         lam.update_function_configuration(FunctionName=NAME, Environment={"Variables": env}, Timeout=90, MemorySize=1024)
     except lam.exceptions.ResourceNotFoundException:
-        if not env.get("KENA_BASIC_AUTH"):
-            sys.exit("--password is required on first deploy")
+        if env.get("KENA_BASIC_AUTH") is None:
+            sys.exit("Choose --password (sign-in page) or --no-login (open demo) on first deploy")
         lam.create_function(FunctionName=NAME, Runtime=RUNTIME, Role=role_arn, Handler="app.lambda_handler.handler", Code={"ZipFile": code},
-                            Timeout=90, MemorySize=1024, Architectures=["x86_64"], Environment={"Variables": {k: v for k, v in env.items() if v is not None}},
+                            Timeout=90, MemorySize=1024, Architectures=["x86_64"], Environment={"Variables": {k: v for k, v in env.items() if v}},
                             Tags={"project": NAME})
     lam.get_waiter("function_updated_v2").wait(FunctionName=NAME)
     return lam.get_function_configuration(FunctionName=NAME)["Environment"]["Variables"]
@@ -199,7 +201,8 @@ def delete(session):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--password", help="Dashboard password for user 'kena' (required on first deploy)")
+    parser.add_argument("--password", help="Dashboard password for user 'kena'")
+    parser.add_argument("--no-login", action="store_true", help="Remove the sign-in page; rely on AWS WAF (rate limiting, managed rules)")
     parser.add_argument("--model", default=None, help="Bedrock model id (default anthropic.claude-opus-5-5)")
     parser.add_argument("--agent", choices=["claude", "local"], default=None)
     parser.add_argument("--delete", action="store_true")
@@ -217,7 +220,7 @@ def main():
     print("✓ IAM role")
     env = {"KENA_DYNAMO_TABLE": f"{NAME}-journeys", "KENA_AGENT": args.agent or None, "KENA_MODEL": args.model, "KENA_LIVE": "0",
            "KENA_TICK_ON_REQUEST": "1", "KENA_WORKER_INTERVAL_SECONDS": "5",
-           "KENA_BASIC_AUTH": f"kena:{args.password}" if args.password else None}
+           "KENA_BASIC_AUTH": "" if args.no_login else f"kena:{args.password}" if args.password else None}
     lam = session.client("lambda")
     try:
         existing = lam.get_function_configuration(FunctionName=NAME).get("Environment", {}).get("Variables", {})
@@ -236,7 +239,8 @@ def main():
     url = "https://" + domain
     print("✓ CloudFront distribution:", url, "(first deploy takes about 5-10 minutes to go live)")
     print("✓ live" if wait_ready(url) else "! not reachable yet; try again in a few minutes")
-    print(f"\nDashboard: {url}\nCustomer phone: {url}/device\nSign in as 'kena' with your password.")
+    print(f"\nDashboard: {url}\nCustomer phone: {url}/device")
+    print("Sign in as 'kena' with your password." if variables.get("KENA_BASIC_AUTH") else "Open access (no sign-in); AWS WAF rate-limits each IP.")
 
 
 if __name__ == "__main__":
