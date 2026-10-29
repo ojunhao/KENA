@@ -1,14 +1,17 @@
 import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
 import secrets
 import threading
 import time
+import urllib.parse
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from . import inbound
 from .agent import build_agent
@@ -66,16 +69,38 @@ def create_app(db_path=None, agent=None, transport=None, clock=None, settings=No
     last_tick = [0.0]
     tick_lock = threading.Lock()
 
+    # Signed-in browsers carry a session cookie derived from the configured credentials; API clients may send HTTP Basic.
+    session_token = hmac.new(settings.basic_auth.encode(), b"kena-session", hashlib.sha256).hexdigest() if settings.basic_auth else ""
+
     if settings.basic_auth:
         @application.middleware("http")
         async def basic_auth(request: Request, call_next):
             # Provider webhooks authenticate by signature; the health check stays open for load balancers.
-            if request.url.path in {"/healthz", "/webhooks/sns"}:
+            if request.url.path in {"/healthz", "/webhooks/sns", "/login"}:
                 return await call_next(request)
             expected = "Basic " + base64.b64encode(settings.basic_auth.encode()).decode()
-            if not secrets.compare_digest(request.headers.get("authorization", ""), expected):
-                return JSONResponse({"detail": "Authentication required"}, 401, {"WWW-Authenticate": 'Basic realm="KENA"'})
-            return await call_next(request)
+            if (secrets.compare_digest(request.headers.get("authorization", ""), expected)
+                    or secrets.compare_digest(request.cookies.get("kena_session", ""), session_token)):
+                return await call_next(request)
+            if request.method == "GET" and "text/html" in request.headers.get("accept", ""):
+                return RedirectResponse("/login?next=" + urllib.parse.quote(request.url.path), 303)
+            return JSONResponse({"detail": "Authentication required"}, 401)
+
+        @application.get("/login")
+        def login_page():
+            return FileResponse(static / "login.html")
+
+        @application.post("/login")
+        async def login(request: Request):
+            form = urllib.parse.parse_qs((await request.body()).decode(errors="replace"))
+            field = lambda name: (form.get(name) or [""])[0]
+            target = field("next") if field("next").startswith("/") and not field("next").startswith("//") else "/"
+            if not secrets.compare_digest(f"{field('username')}:{field('password')}", settings.basic_auth):
+                return RedirectResponse("/login?failed=1&next=" + urllib.parse.quote(target), 303)
+            response = RedirectResponse(target, 303)
+            secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+            response.set_cookie("kena_session", session_token, max_age=14 * 24 * 3600, httponly=True, secure=secure, samesite="lax")
+            return response
 
     if settings.origin_secret:
         @application.middleware("http")

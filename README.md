@@ -111,7 +111,7 @@ See `.env.example`.
 ## Tests
 
 ```bash
-python -m pytest -q                        # 114 tests; AWS calls are stubbed, no network
+python -m pytest -q                        # 115 tests; AWS calls are stubbed, no network
 python scripts/verify_local.py --browser   # isolated server + CLI demo + Chromium checks (Node 22+, npm install)
 ```
 

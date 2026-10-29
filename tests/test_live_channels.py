@@ -340,3 +340,17 @@ def test_send_failure_reason_is_logged_not_exposed(tmp_path, caplog):
         j = create(client)
     assert [m["status"] for m in j["messages"]] == ["accepted", "failed"]
     assert "provider down" in caplog.text and "provider down" not in str(j)
+
+
+def test_sign_in_page_sets_session_cookie(tmp_path):
+    client = TestClient(create_app(str(tmp_path / "s.db"), settings=Settings(basic_auth="kena:pw-123")), follow_redirects=False)
+    page = client.get("/", headers={"accept": "text/html"})
+    assert page.status_code == 303 and page.headers["location"] == "/login?next=/"
+    assert "Sign in" in client.get("/login").text
+    assert client.get("/api/dashboard").status_code == 401 and "www-authenticate" not in client.get("/api/dashboard").headers
+    wrong = client.post("/login", content="username=kena&password=nope&next=/", headers={"content-type": "application/x-www-form-urlencoded"})
+    assert wrong.headers["location"].startswith("/login?failed=1")
+    sneaky = client.post("/login", content="username=kena&password=pw-123&next=//evil.example", headers={"content-type": "application/x-www-form-urlencoded"})
+    assert sneaky.status_code == 303 and sneaky.headers["location"] == "/"
+    assert client.get("/api/dashboard").status_code == 200
+    assert client.get("/device", headers={"accept": "text/html"}).status_code == 200

@@ -141,7 +141,7 @@ The script builds a Linux package for Python 3.12 and creates, in us-east-1:
 | IAM role `kena-lambda` | DynamoDB on that table, Bedrock inference, CloudWatch Logs |
 | Lambda function `kena` with a Function URL | The FastAPI app via Mangum; it rejects any request without CloudFront's secret origin header |
 | AWS WAF web ACL `kena-waf` | Per-IP rate limit, Amazon IP reputation list, known bad inputs, common rule set |
-| CloudFront distribution | HTTPS URL, no caching, WAF attached, forwards the dashboard's basic-auth header |
+| CloudFront distribution | HTTPS URL, no caching, WAF attached; judges sign in on KENA's /login page (user `kena`) |
 
 Channels are emulated and Claude on Bedrock is live (enable model access first). Dashboard polling drives the no-response follow-ups, since Lambda has no background worker. Run the script again to deploy new code; settings and the password are kept. `python scripts/deploy_lambda.py --delete` removes the distribution, function and table.
 
