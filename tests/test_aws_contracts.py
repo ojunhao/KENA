@@ -148,3 +148,14 @@ def test_agentcore_entrypoint_local_decision():
     assert decide({"context": context("not me")}, LocalAgent()) == {"actions": [{"type": "propose_protection", "reason": "Customer disputed the transfer"}]}
     with pytest.raises(ValueError):
         decide({"context": {"trigger": "other"}}, LocalAgent())
+
+
+def test_agentcore_runtime_app_contract():
+    pytest.importorskip("bedrock_agentcore")
+    from starlette.testclient import TestClient
+    from app.agentcore import build_runtime_app
+    runtime = TestClient(build_runtime_app(LocalAgent()))
+    assert runtime.get("/ping").status_code == 200
+    response = runtime.post("/invocations", json={"context": context("not me")})
+    assert response.status_code == 200
+    assert response.json() == {"actions": [{"type": "propose_protection", "reason": "Customer disputed the transfer"}]}

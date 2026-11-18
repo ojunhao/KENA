@@ -37,7 +37,7 @@ Most scam losses are authorised push payments: the victim makes the transfer the
 
 **Demo scope.** In the recorded demo, Claude on Amazon Bedrock and Amazon SES run live. WhatsApp and RCS messages go through the same journey code but are shown on KENA's customer-device emulator, because WhatsApp Business onboarding and RCS agent registration were not complete in time. The AWS End User Messaging adapters for WhatsApp, RCS and SMS and the SNS inbound webhook are implemented and contract-tested; switching a channel to live is configuration (`KENA_LIVE_CHANNELS`). All customer, payee and banking data is synthetic and banking actions are mocked.
 
-**Built with:** Amazon Bedrock (Claude, tool use) · AWS End User Messaging Social (WhatsApp) · AWS End User Messaging SMS (RCS, SMS) · Amazon SES · Amazon SNS · optional Amazon Bedrock AgentCore Runtime · Amazon EC2 · Amazon CloudFront · AWS CloudFormation · AWS Systems Manager · Amazon S3 · AWS IAM · Python / FastAPI.
+**Built with:** Amazon Bedrock (Claude, tool use) · AWS End User Messaging Social (WhatsApp) · AWS End User Messaging SMS (RCS, SMS) · Amazon SES · Amazon SNS · Amazon Bedrock AgentCore Runtime · Amazon EC2 · Amazon CloudFront · AWS CloudFormation · AWS Systems Manager · Amazon S3 · AWS IAM · Python / FastAPI.
 
 ## What the agent decides, and what it can't
 
@@ -83,6 +83,8 @@ To use Claude while keeping channels simulated: `AWS_REGION=ap-southeast-1 pytho
 
 **Hosted on AWS, serverless:** `python scripts/deploy_lambda.py --password '...'` deploys KENA as an AWS Lambda function behind Amazon CloudFront with AWS WAF (rate limiting and AWS managed rule sets), with journey state in Amazon DynamoDB. It uses no EC2, VPC, public IP or security group, so it suits locked-down landing-zone accounts. Channels are emulated (the `/device` page plays the customer) and Claude on Bedrock is live. See [docs/setup-aws.md](docs/setup-aws.md#serverless-deployment-lambda--cloudfront--waf).
 
+**Agent on Amazon Bedrock AgentCore Runtime:** `python scripts/deploy_agentcore.py --use-from-lambda` deploys KENA's decision agent (the Claude tool loop) as the AgentCore runtime `kena_scam_intervention`, from a code package with no Docker, tests it with a real decision, and points the serverless app at it. The app keeps the journey state, policy gate and consent; the runtime only plans actions, which the app re-validates.
+
 **Hosted on AWS, EC2:** follow **[docs/setup-aws.md](docs/setup-aws.md)**, then one command creates an EC2 + CloudFront stack with live WhatsApp:
 
 ```bash
@@ -111,7 +113,7 @@ See `.env.example`.
 ## Tests
 
 ```bash
-python -m pytest -q                        # 115 tests; AWS calls are stubbed, no network
+python -m pytest -q                        # 116 tests; AWS calls are stubbed, no network
 python scripts/verify_local.py --browser   # isolated server + CLI demo + Chromium checks (Node 22+, npm install)
 ```
 
@@ -128,7 +130,7 @@ Coverage includes the original journey, consent, concurrency and deletion invari
 | `app/messaging.py` | WhatsApp (End User Messaging Social), SMS/RCS, SES adapters and the simulator |
 | `app/inbound.py` | SNS signature verification; WhatsApp and two-way SMS event parsing |
 | `app/main.py`, `app/run.py`, `app/config.py` | HTTP API, webhook, background worker, dashboard auth, environment settings |
-| `app/agentcore.py` | Optional Bedrock AgentCore Runtime client and entrypoint |
+| `app/agentcore.py`, `kena_agentcore.py`, `scripts/deploy_agentcore.py` | Bedrock AgentCore Runtime: client used by the app, runtime entry point, and deploy script |
 | `app/static/` | Intervention desk (dashboard) and the customer-device emulator (`/device`) |
 | `scripts/connect_local.py` | Wires your AWS account to a laptop-hosted KENA: readiness check, test email, SNS topic, WhatsApp events, tunnel subscription |
 | `infra/kena.yaml`, `scripts/deploy_aws.py` | EC2 + CloudFront CloudFormation stack and deploy script |

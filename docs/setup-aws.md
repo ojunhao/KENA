@@ -146,3 +146,16 @@ The script builds a Linux package for Python 3.12 and creates, in us-east-1:
 Channels are emulated and Claude on Bedrock is live (enable model access first). Dashboard polling drives the no-response follow-ups, since Lambda has no background worker. Run the script again to deploy new code; settings and the password are kept. `python scripts/deploy_lambda.py --delete` removes the distribution, function and table.
 
 Costs are small: Lambda, DynamoDB and CloudFront are per request, and AWS WAF is about US$5 a month for the web ACL plus US$1 per rule, prorated.
+
+## Agent on Amazon Bedrock AgentCore Runtime
+
+KENA's decision agent can run as its own AgentCore runtime, so it appears under **Amazon Bedrock AgentCore → Agents**:
+
+```bash
+python scripts/deploy_agentcore.py                    # deploy or update, then run one test decision
+python scripts/deploy_agentcore.py --use-from-lambda  # also switch the serverless app to call it
+```
+
+The script packages `app/` with Linux arm64 wheels for Python 3.12 (direct code deployment, no container build), uploads it to a private S3 bucket `kena-agentcore-<account>-us-east-1`, creates the IAM role `kena-agentcore-runtime` (Bedrock inference and logs only) and the runtime `kena_scam_intervention` with public network mode and the HTTP protocol. It then invokes the runtime with a coached-transfer reply and prints the actions Claude chose. With `--use-from-lambda`, and only when that test proposes protection, it lets the `kena-lambda` role invoke the runtime and sets `KENA_AGENT=agentcore` on the function.
+
+The runtime only plans actions from a journey snapshot; the app still owns the journey state, re-validates every action and keeps consent deterministic. Each journey reuses one runtime session, so a conversation stays on a warm session. To go back to calling Bedrock directly, set `KENA_AGENT=claude` on the Lambda function.
